@@ -37,3 +37,7 @@
 !assets/sars2.fasta
 !assets/sars2.gbk
 
+# examples
+!examples
+!examples/chtc_executable.sh
+
