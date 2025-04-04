@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 
 # Writen by Devon Gregory with assistance from Christopher Bottoms
 # University of Missouri

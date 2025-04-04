@@ -18,7 +18,8 @@ workflow {
     // Channel for the SRA run accessions to download
     ch_sra_accession = Channel
         .fromPath(params.accession_list)
-        .splitText()
+        .splitCsv(strip: true)
+        .map { it -> it[0] }
 
     // The reference FASTA
     ch_ref_fasta = Channel.fromPath(params.ref_fasta)
@@ -28,12 +29,12 @@ workflow {
 
 
     FETCH_FASTQ(
-        ch_sra_accession.combine(ch_ref_fasta).combine(ch_ref_gbk)
+        ch_sra_accession
     )
 
     // split the output FASTQs from the SRA download into two channels, where one
     // contains paired-end libraries with >=2 FASTQs, and the other contains the rest
-    FETCH_FASTQ.out
+    FETCH_FASTQ .out
         .branch { sample_id, fastq_files ->
             single: fastq_files.size() == 1
                 return tuple(sample_id, file(fastq_files[0]))
@@ -52,7 +53,7 @@ workflow {
     )
 
     TRIM_ENDS(
-        FETCH_FASTQ.out
+        DEREPLICATE_READS.out
     )
 
     MAP_TO_REF(
@@ -60,21 +61,22 @@ workflow {
     )
 
     SAM_REFINER(
-        TRIM_ENDS.out.combine(ch_ref_gbk)
+        MAP_TO_REF.out.combine(ch_ref_gbk)
     )
 
     SORT_AND_CONVERT(
-        SAM_REFINER.out.combine(ch_ref_fasta)
+        SAM_REFINER.out.sam.combine(ch_ref_fasta)
     )
 }
-
 
 process FETCH_FASTQ {
 
     tag "${run_accession}"
-    publishDir params.results
+    storeDir "${launchDir}/sra_cache"
 
     maxForks params.max_concurrent_downloads
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
     input:
     val run_accession
@@ -85,7 +87,7 @@ process FETCH_FASTQ {
     script:
     """
     prefetch ${run_accession}
-    fasterq-dump ${run_accession} --split-3
+    fasterq-dump --split-3 ${run_accession}
     """
 }
 
@@ -94,8 +96,8 @@ process MERGE_PAIRS {
     tag "${run_accession}"
     publishDir params.results
 
-    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
-    maxRetries 2
+    // errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+    // maxRetries 2
 
     time { "${5 * task.attempt}minutes" }
     cpus 4
@@ -127,6 +129,8 @@ process DEREPLICATE_READS {
     tag "${run_accession}"
     publishDir params.results
 
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
     cpus 1
 
     input:
@@ -146,6 +150,8 @@ process TRIM_ENDS {
     tag "${run_accession}"
     publishDir params.results
 
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
     input:
     tuple val(run_accession), path(fasta)
 
@@ -161,7 +167,7 @@ process TRIM_ENDS {
     else {
         """
         cat ${fasta} \
-        | seqkit amplicon -r ${params.end_trim_bases}:-${params.end_trim_bases} \
+        | seqkit subseq -r ${params.end_trim_bases}:-${params.end_trim_bases} \
         -o ${run_accession}.collapsed.${params.end_trim_bases}trimmed.fasta
         """
     }
@@ -171,6 +177,8 @@ process MAP_TO_REF {
 
     tag "${run_accession}"
     publishDir params.results
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
     cpus 4
 
@@ -193,7 +201,9 @@ process SAM_REFINER {
     tag "${run_accession}"
     publishDir params.results
 
-    cpus 8
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
+    cpus params.sam_refiner_procs
 
     input:
     tuple val(run_accession), path(sam), path(ref_gbk)
@@ -207,7 +217,7 @@ process SAM_REFINER {
     SAM_Refiner.py -r ${ref_gbk} \
     --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --nt_call 1 --min_count 1 \
     --min_samp_abund 0 --ntabund 0 --ntcover 1 --mp ${task.cpus} --chim_rm 0 --deconv 0 \
-    -S ${run_accession}.SARS2.wg.sam
+    -S ${sam}
     """
 }
 
@@ -215,6 +225,8 @@ process SORT_AND_CONVERT {
 
     tag "${run_accession}"
     publishDir params.results
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
     cpus 8
 
@@ -232,4 +244,6 @@ process SORT_AND_CONVERT {
     -o ${run_accession}.SARS2.wg.cram
     """
 }
+
+
 
