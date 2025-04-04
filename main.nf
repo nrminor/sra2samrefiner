@@ -106,7 +106,7 @@ process MERGE_PAIRS {
     tuple val(run_accession), path(reads1), path(reads2)
 
     output:
-    tuple val(run_accession), path("${run_accession}.merged.fastq.gz")
+    tuple val(run_accession), path("${run_accession}.merged.fastq")
 
     script:
     def Xmx = 4 * task.attempt
@@ -115,8 +115,8 @@ process MERGE_PAIRS {
 	-Xmx${Xmx}g \
 	in1=`realpath ${reads1}` \
 	in2=`realpath ${reads2}` \
-	out=${run_accession}.merged.fastq.gz \
-	outu=${run_accession}.unmerged.fastq.gz \
+	out=${run_accession}.merged.fastq \
+	outu=${run_accession}.unmerged.fastq \
     qtrim=t \
 	ihist=${run_accession}_ihist_merge.txt \
 	threads=${task.cpus} \
