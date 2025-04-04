@@ -65,7 +65,7 @@ workflow {
     )
 
     SORT_AND_CONVERT(
-        SAM_REFINER.out.sam.combine(ch_ref_fasta)
+        MAP_TO_REF.out.combine(ch_ref_fasta)
     )
 }
 
@@ -209,15 +209,15 @@ process SAM_REFINER {
     tuple val(run_accession), path(sam), path(ref_gbk)
 
     output:
-    tuple val(run_accession), path("*.sam"), emit: sam
     tuple val(run_accession), path("*.tsv"), emit: tsv
 
     script:
     """
-    SAM_Refiner.py -r ${ref_gbk} \
-    --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --nt_call 1 --min_count 1 \
-    --min_samp_abund 0 --ntabund 0 --ntcover 1 --mp ${task.cpus} --chim_rm 0 --deconv 0 \
-    -S ${sam}
+    SAM_Refiner.py -r ${ref_gbk} -S ${sam} \
+    --collect 0 --seq 1 --indel 0 --covar 0 --max_covar 1 \
+    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 \
+    --ntabund 0 --ntcover 1 --AAreport 1 --mp ${task.cpus} \
+    --chim_rm 0 --deconv 0 --max_dist 50
     """
 }
 
@@ -244,6 +244,7 @@ process SORT_AND_CONVERT {
     -o ${run_accession}.SARS2.wg.cram
     """
 }
+
 
 
 
