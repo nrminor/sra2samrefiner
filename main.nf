@@ -4,15 +4,15 @@ workflow {
 
     assert params.accession_list :
     "No accession list text file provided with the `--accession_list` argument."
-    assert params.accession_list.isFile() :
+    assert file(params.accession_list).isFile() :
     "The provided accession list does not exist or cannot be read."
     assert params.ref_fasta :
     "No fasta reference file provided with the `--ref_fasta` argument."
-    assert params.ref_fasta.isFile() :
+    assert file(params.ref_fasta).isFile() :
     "The provided fasta reference file does not exist or cannot be read."
     assert params.ref_gbk :
     "No genbank reference file provided with the `--ref_gbk` argument."
-    assert params.ref_gbk.isFile() :
+    assert file(params.ref_gbk).isFile() :
     "The provided genbank reference file does not exist or cannot be read."
 
     // Channel for the SRA run accessions to download
@@ -72,7 +72,7 @@ workflow {
 process FETCH_FASTQ {
 
     tag "${run_accession}"
-    // publishDir
+    publishDir params.results
 
     maxForks params.max_concurrent_downloads
 
@@ -92,7 +92,7 @@ process FETCH_FASTQ {
 process MERGE_PAIRS {
 
     tag "${run_accession}"
-    // publishDir
+    publishDir params.results
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
     maxRetries 2
@@ -125,7 +125,7 @@ process MERGE_PAIRS {
 process DEREPLICATE_READS {
 
     tag "${run_accession}"
-    // publishDir
+    publishDir params.results
 
     cpus 1
 
@@ -144,6 +144,7 @@ process DEREPLICATE_READS {
 process TRIM_ENDS {
 
     tag "${run_accession}"
+    publishDir params.results
 
     input:
     tuple val(run_accession), path(fasta)
@@ -169,7 +170,7 @@ process TRIM_ENDS {
 process MAP_TO_REF {
 
     tag "${run_accession}"
-    // publishDir
+    publishDir params.results
 
     cpus 4
 
@@ -190,7 +191,7 @@ process MAP_TO_REF {
 process SAM_REFINER {
 
     tag "${run_accession}"
-    // publishDir
+    publishDir params.results
 
     cpus 8
 
@@ -213,7 +214,7 @@ process SAM_REFINER {
 process SORT_AND_CONVERT {
 
     tag "${run_accession}"
-    // publishDir
+    publishDir params.results
 
     cpus 8
 
@@ -231,3 +232,4 @@ process SORT_AND_CONVERT {
     -o ${run_accession}.SARS2.wg.cram
     """
 }
+

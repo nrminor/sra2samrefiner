@@ -14,7 +14,7 @@ echo 'SRR32970560\nSRR32970561' > accessions.txt
 # run with SARS2 reference while trimming 30 bases from each end of each read
 nextflow run . \
 --ref_fasta ./assets/sars2.fasta \
---ref_gbk ./assets/sars.gbk \
+--ref_gbk ./assets/sars2.gbk \
 --accession_list accessions.txt \
 --end_trim_bases 30
 ```
