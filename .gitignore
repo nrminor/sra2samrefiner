@@ -1,0 +1,38 @@
+# start with an inverted gitignore
+*
+
+# project root files
+!.gitignore
+!.gitattributes
+!README.md
+!LICENSE
+!main.nf
+!nextflow.config
+!pyproject.toml
+!pixi.lock
+!uv.lock
+!refman.toml
+!Dockerfile
+!justfile
+
+# bin scripts
+!bin/
+!bin/*.py
+!bin/*.R
+!bin/*.pl
+!bin/*.sh
+!bin/*.awk
+
+# modules, subworkflows, and workflows
+!workflows/
+!workflows/*.nf
+!subworkflows/
+!subworkflows/*.nf
+!modules/
+!modules/*.nf
+
+# pre-loaded assets
+!assets
+!assets/sars2.fasta
+!assets/sars2.gbk
+
