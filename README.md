@@ -9,7 +9,7 @@ To use without any additional orchestrator support, run the following (this assu
 pixi shell --frozen
 
 # put together a list of accessions to download
-cat SRR32970560	SRR32970561 > accessions.txt
+echo 'SRR32970560\nSRR32970561' > accessions.txt
 
 # run with SARS2 reference while trimming 30 bases from each end of each read
 nextflow run . \
