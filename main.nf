@@ -94,7 +94,7 @@ process FETCH_FASTQ {
 process MERGE_PAIRS {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode
+    // publishDir params.results, mode: params.reporting_mode
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
     maxRetries 2
@@ -127,7 +127,7 @@ process MERGE_PAIRS {
 process DEREPLICATE_READS {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode
+    // publishDir params.results, mode: params.reporting_mode
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -148,7 +148,7 @@ process DEREPLICATE_READS {
 process TRIM_ENDS {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode
+    // publishDir params.results, mode: params.reporting_mode
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -176,7 +176,7 @@ process TRIM_ENDS {
 process MAP_TO_REF {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode
+    // publishDir params.results, mode: params.reporting_mode
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
