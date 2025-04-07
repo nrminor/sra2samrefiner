@@ -96,8 +96,8 @@ process MERGE_PAIRS {
     tag "${run_accession}"
     publishDir params.results
 
-    // errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
-    // maxRetries 2
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+    maxRetries 2
 
     time { "${5 * task.attempt}minutes" }
     cpus 4
@@ -109,7 +109,7 @@ process MERGE_PAIRS {
     tuple val(run_accession), path("${run_accession}.merged.fastq")
 
     script:
-    def Xmx = 4 * task.attempt
+    def Xmx = 8 * task.attempt
     """
 	bbmerge.sh \
 	-Xmx${Xmx}g \
