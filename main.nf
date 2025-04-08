@@ -109,7 +109,7 @@ process MERGE_PAIRS {
     tuple val(run_accession), path("${run_accession}.merged.fastq")
 
     script:
-    // def Xmx = 8 * task.attempt
+    def Xmx = 8 * task.attempt
     """
 	bbmerge.sh \
 	in1=`realpath ${reads1}` \
