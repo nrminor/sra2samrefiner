@@ -99,7 +99,7 @@ process MERGE_PAIRS {
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
     maxRetries 2
 
-    time { "${5 * task.attempt}minutes" }
+    // time { "${5 * task.attempt}minutes" }
     cpus 4
 
     input:
@@ -109,10 +109,9 @@ process MERGE_PAIRS {
     tuple val(run_accession), path("${run_accession}.merged.fastq")
 
     script:
-    def Xmx = 8 * task.attempt
+    // def Xmx = 8 * task.attempt
     """
 	bbmerge.sh \
-	-Xmx${Xmx}g \
 	in1=`realpath ${reads1}` \
 	in2=`realpath ${reads2}` \
 	out=${run_accession}.merged.fastq \
@@ -121,6 +120,7 @@ process MERGE_PAIRS {
 	ihist=${run_accession}_ihist_merge.txt \
 	threads=${task.cpus} \
 	-eoom
+	# -Xmx${Xmx}g \
 	"""
 }
 
