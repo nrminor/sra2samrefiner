@@ -75,6 +75,7 @@ process FETCH_FASTQ {
     storeDir "${launchDir}/sra_cache"
 
     maxForks params.max_concurrent_downloads
+    cpus 3
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -151,6 +152,8 @@ process TRIM_ENDS {
     // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
+    cpus 3
 
     input:
     tuple val(run_accession), path(fasta)
