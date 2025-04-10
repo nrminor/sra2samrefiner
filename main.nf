@@ -217,10 +217,9 @@ process SAM_REFINER {
     script:
     """
     SAM_Refiner.py -r ${ref_gbk} -S ${sam} \
-    --collect 0 --seq 1 --indel 0 --covar 0 --max_covar 1 \
-    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 \
-    --ntabund 0 --ntcover 1 --AAreport 1 --mp ${task.cpus} \
-    --chim_rm 0 --deconv 0 --max_dist 50
+    --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --max_covar 1 --max_dist 100 \
+    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \
+    --ntcover 1 --AAreport 1 --chim_rm 0 --deconv 0 --mp ${task.cpus}
     """
 }
 
