@@ -122,6 +122,9 @@ process MERGE_PAIRS {
 	threads=${task.cpus} \
 	-eoom
 	# -Xmx${Xmx}g \
+	
+    # Concat the unmerged reads to the end of the merged reads file
+    cat ${run_accession}.unmerged.fastq >> ${run_accession}.merged.fastq
 	"""
 }
 
