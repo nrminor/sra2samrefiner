@@ -1,7 +1,5 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 
-import os
-import sys
 import argparse
 
 
@@ -9,7 +7,9 @@ parser = argparse.ArgumentParser(description="Dereplicates fasta or fastq reads 
 
 parser.add_argument("in_file", type=argparse.FileType("r"), help="fasta or fastq file")
 parser.add_argument("out_file", type=argparse.FileType("w"), help="output fasta name")
-parser.add_argument("min_count", type=int, default=1, help="min count for a sequence to be included.  default 1")
+parser.add_argument(
+    "min_count", type=int, default=1, help="min count for a sequence to be included.  default 1"
+)
 
 args = parser.parse_args()
 
@@ -72,7 +72,9 @@ else:
     print("input file not recognized as fasta/q")
 args.in_file.close()
 
-print(f"{total_reads} sequences collected.  Dereplicated to {len(seq_dict)} unique sequences.  Writing output file")
+print(
+    f"{total_reads} sequences collected.  Dereplicated to {len(seq_dict)} unique sequences.  Writing output file"
+)
 sorted_seqs = sorted(seq_dict.items(), key=lambda x: x[1], reverse=True)
 
 counter = 1
