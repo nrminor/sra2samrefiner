@@ -74,7 +74,7 @@ workflow {
 process FETCH_FASTQ {
 
     tag "${run_accession}"
-    storeDir "${launchDir}/sra_cache"
+    // storeDir "${launchDir}/sra_cache"
 
     maxForks params.max_concurrent_downloads
     cpus 3
