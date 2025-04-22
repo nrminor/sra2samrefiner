@@ -19,7 +19,9 @@ workflow {
     ch_sra_accession = Channel
         .fromPath(params.accession_list)
         .splitCsv(strip: true)
+        .filter { it -> !it[0].startsWith("#") }
         .map { it -> it[0] }
+        .unique()
 
     // The reference FASTA
     ch_ref_fasta = Channel.fromPath(params.ref_fasta)
@@ -36,22 +38,43 @@ workflow {
     // contains paired-end libraries with >=2 FASTQs, and the other contains the rest
     FETCH_FASTQ.out
         .branch { sample_id, fastq_files ->
+
+            // If there's just one FASTQ, "unpack" it from the array returned by the glob
             single: fastq_files.size() == 1
                 return tuple(sample_id, file(fastq_files[0]))
+
+            // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq" and the second with ".2.fastq",
+            // which is a (mostly) reliable SRA convention
             paired: fastq_files.size() > 1 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
                 return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]))
-            triple: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("1.fastq") && file(fastq_files[2]).getName().endsWith("2.fastq")
+
+            // There are a couple common cases of >2 FASTQs per accession that we can handle. The first is where the first two files
+            // end with "1.fastq" and ".2.fastq" and the third ends with "3.fastq". Assuming correct alphanumeric sorting, we handle
+            // that in this branch.
+            triple1: fastq_files.size() > 2 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
+                return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]))
+
+            // It's also possible that the third, non-R1/R2 reads are in a FASTQ that doesn't have a numbered suffix, e.g.,
+            // SRR33146255.fastq. When that's the case, that third FASTQ will end up first when the files are sorted by name.
+            // We handle that case in this branch by indexing out the second and third FASTQ (groovy/nextflow are 0-indexed)
+            triple2: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("1.fastq") && file(fastq_files[2]).getName().endsWith("2.fastq")
                 return tuple(sample_id, file(fastq_files[1]), file(fastq_files[2]))
-            other: false
+
+            // Other cases are as-yet unsupported
+            other: true
         }
-        .set { ch_fastq_cardinality }
+        .set { ch_sorted_fastqs }
 
     MERGE_PAIRS(
-        ch_fastq_cardinality.paired
+        ch_sorted_fastqs.paired
+        .mix(
+            ch_sorted_fastqs.triple1,
+            ch_sorted_fastqs.triple2
+        )
     )
 
     DEREPLICATE_READS(
-        MERGE_PAIRS.out.mix(ch_fastq_cardinality.single)
+        MERGE_PAIRS.out.mix(ch_sorted_fastqs.single)
     )
 
     TRIM_ENDS(
@@ -63,18 +86,24 @@ workflow {
     )
 
     SAM_REFINER(
-        MAP_TO_REF.out.combine(ch_ref_gbk)
+        MAP_TO_REF.out
+        .filter { _id, count, _sam ->
+            int count_int = count as Integer
+            count_int  > 0 }
+        .map { id, _count, sam -> tuple( id, file(sam) ) }
+        .combine(ch_ref_gbk)
     )
 
     SORT_AND_CONVERT(
-        MAP_TO_REF.out.combine(ch_ref_fasta)
+        MAP_TO_REF.out
+        .map { id, _count, sam -> tuple( id, file(sam) ) }
+        .combine(ch_ref_fasta)
     )
 }
 
 process FETCH_FASTQ {
 
     tag "${run_accession}"
-    // storeDir "${launchDir}/sra_cache"
 
     maxForks params.max_concurrent_downloads
     cpus 3
@@ -85,7 +114,7 @@ process FETCH_FASTQ {
     val run_accession
 
     output:
-    tuple val(run_accession), path("*.fastq")
+    tuple val(run_accession), path("${run_accession}*.fastq")
 
     script:
     """
@@ -102,7 +131,6 @@ process MERGE_PAIRS {
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
     maxRetries 2
 
-    // time { "${5 * task.attempt}minutes" }
     cpus 4
 
     input:
@@ -112,7 +140,6 @@ process MERGE_PAIRS {
     tuple val(run_accession), path("${run_accession}.merged.fastq")
 
     script:
-    def Xmx = 8 * task.attempt
     """
 	bbmerge.sh \
 	in1=`realpath ${reads1}` \
@@ -123,7 +150,6 @@ process MERGE_PAIRS {
 	ihist=${run_accession}_ihist_merge.txt \
 	threads=${task.cpus} \
 	-eoom
-	# -Xmx${Xmx}g \
 	
     # Concat the unmerged reads to the end of the merged reads file
     cat ${run_accession}.unmerged.fastq >> ${run_accession}.merged.fastq
@@ -194,13 +220,17 @@ process MAP_TO_REF {
     tuple val(run_accession), path(derep_fa_reads), path(ref_fasta)
 
     output:
-    tuple val(run_accession), path("${run_accession}.SARS2.wg.sam")
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.sam")
 
     script:
     """
+    # run minimap2
     minimap2 -a ${ref_fasta} ${derep_fa_reads} \
     --sam-hit-only --secondary=no \
     -o ${run_accession}.SARS2.wg.sam
+
+    # count the records in the SAM file
+    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.sam)
     """
 }
 
@@ -251,7 +281,4 @@ process SORT_AND_CONVERT {
     -o ${run_accession}.SARS2.wg.cram
     """
 }
-
-
-
 
