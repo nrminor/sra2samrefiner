@@ -43,21 +43,21 @@ workflow {
             single: fastq_files.size() == 1
                 return tuple(sample_id, file(fastq_files[0]))
 
-            // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq" and the second with ".2.fastq",
+            // If there are two FASTQs, expect that the alphanumeric first will end with ".0.fq.gz" and the second with ".1.fq.gz",
             // which is a (mostly) reliable SRA convention
-            paired: fastq_files.size() > 1 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
+            paired: fastq_files.size() > 1 && file(fastq_files[0]).getName().endsWith("0.fq.gz") && file(fastq_files[1]).getName().endsWith("1.fq.gz")
                 return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]))
 
             // There are a couple common cases of >2 FASTQs per accession that we can handle. The first is where the first two files
-            // end with "1.fastq" and ".2.fastq" and the third ends with "3.fastq". Assuming correct alphanumeric sorting, we handle
+            // end with "0.fq.gz" and ".1.fq.gz" and the third ends with "3.fastq". Assuming correct alphanumeric sorting, we handle
             // that in this branch.
-            triple1: fastq_files.size() > 2 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
+            triple1: fastq_files.size() > 2 && file(fastq_files[0]).getName().endsWith("0.fq.gz") && file(fastq_files[1]).getName().endsWith("1.fq.gz")
                 return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]))
 
             // It's also possible that the third, non-R1/R2 reads are in a FASTQ that doesn't have a numbered suffix, e.g.,
             // SRR33146255.fastq. When that's the case, that third FASTQ will end up first when the files are sorted by name.
             // We handle that case in this branch by indexing out the second and third FASTQ (groovy/nextflow are 0-indexed)
-            triple2: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("1.fastq") && file(fastq_files[2]).getName().endsWith("2.fastq")
+            triple2: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("0.fq.gz") && file(fastq_files[2]).getName().endsWith("1.fq.gz")
                 return tuple(sample_id, file(fastq_files[1]), file(fastq_files[2]))
 
             // Other cases are as-yet unsupported
@@ -106,7 +106,7 @@ process FETCH_FASTQ {
     tag "${run_accession}"
 
     maxForks params.max_concurrent_downloads
-    cpus 3
+    cpus 8
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -114,12 +114,15 @@ process FETCH_FASTQ {
     val run_accession
 
     output:
-    tuple val(run_accession), path("${run_accession}*.fastq")
+    tuple val(run_accession), path("${run_accession}*.f*q*")
 
     script:
     """
-    prefetch ${run_accession}
-    fasterq-dump --split-3 ${run_accession}
+    xsra prefetch ${run_accession}
+    xsra dump \
+    --prefix ${run_accession}_ --skip-technical --split \
+    --compression g --threads ${task.cpus} --outdir . \
+    ${run_accession}
     """
 }
 
