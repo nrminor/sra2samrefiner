@@ -326,7 +326,7 @@ process SORT_AND_CONVERT {
 	}
 	else {
     """
-    cat ${sam} \
+    sort -n -k 4 ${run_accession}.unmerged.cut.sam \
     | samtools view -T ${ref_fasta} -@${task.cpus} \
     -o ${run_accession}.cut.cram
     """
