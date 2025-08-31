@@ -49,16 +49,18 @@ for line in args.in_file:
                 for i in range(0, len(cig)):
                     if to_trim == 0:
                         break
-                    if cig[i][0] == "D":
+                    if cig[i][0] == "H":
+                        cig[i] = ''
+                    elif cig[i][0] == "D":
                         line[3] += cig[i][1]
                         cig[i] = ''
                     elif cig[i][1] <= to_trim:
                         to_trim -= cig[i][1]
-                        if cig[i][0] == "I":
+                        if cig[i][0] in ("I", "S"):
                             line[3] -= cig[i][1]
                         cig[i] = ''
                     else:
-                        if cig[i][0] == "I":
+                        if cig[i][0] in ("I", "S"):
                             line[3] -= to_trim
                         cig[i][1] -= to_trim
                         break
@@ -67,7 +69,7 @@ for line in args.in_file:
                 to_trim = args.rtrim
                 line[9] = line[9][:-args.rtrim]
                 for i in range(len(cig)-1, -1, -1):
-                    if cig[i][0] == "D":
+                    if cig[i][0] in ("D", "H"):
                         cig[i] = ''
                     elif cig[i][1] <= to_trim:
                         to_trim -= cig[i][1]
