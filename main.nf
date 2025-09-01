@@ -142,12 +142,14 @@ workflow {
 process FETCH_FASTQ {
 
     tag "${run_accession}"
-
     maxForks params.max_concurrent_downloads
     cpus 3
 
     maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
+    errorStrategy = { 
+					task.exitStatus == 3 ? 'ignore' : //  ignore when no files for sample
+					task.attempt <= maxRetries ? 'retry' : 'ignore'
+					}
 
     input:
     val run_accession
@@ -262,16 +264,16 @@ process  TRIM_ENDS {
     tuple val(run_accession), path(merged_sam), path(unmerged_sam)
 
     output:
-    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.unmerged.cut.sam")
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.cut.sam")
 
     script:
     """
     drtrimsam.py --in_file ${merged_sam} --out_file ${run_accession}.merged.cut.sam --ltrim ${params.end_trim_bases} --rtrim ${params.end_trim_bases}
-    drtrimsam.py --in_file ${unmerged_sam} --out_file ${run_accession}.unmerged.cut.sam --ltrim ${params.end_trim_bases}
-    cat ${run_accession}.merged.cut.sam >> ${run_accession}.unmerged.cut.sam
+    drtrimsam.py --in_file ${unmerged_sam} --out_file ${run_accession}.cut.sam --ltrim ${params.end_trim_bases}
+    cat ${run_accession}.merged.cut.sam >> ${run_accession}.cut.sam
 
 	# count the records in the SAM file
-    NUM_RECORDS=\$(cat ${run_accession}.unmerged.cut.sam | wc -l )
+    NUM_RECORDS=\$(cat ${run_accession}.cut.sam | wc -l )
     """
 }
 
@@ -326,7 +328,7 @@ process SORT_AND_CONVERT {
 	}
 	else {
     """
-    sort -n -k 4 ${run_accession}.unmerged.cut.sam \
+    sort -n -k 4 ${sam} \
     | samtools view -T ${ref_fasta} -@${task.cpus} \
     -o ${run_accession}.cut.cram
     """
