@@ -2,6 +2,7 @@
 
 workflow {
 
+    // Validate required parameters
     assert params.accession_list :
     "No accession list text file provided with the `--accession_list` argument."
     assert file(params.accession_list).isFile() :
@@ -14,6 +15,21 @@ workflow {
     "No genbank reference file provided with the `--ref_gbk` argument."
     assert file(params.ref_gbk).isFile() :
     "The provided genbank reference file does not exist or cannot be read."
+    
+    // Validate dual-mode configuration
+    if (params.retro_data && !params.retro_data.isEmpty()) {
+        // Auto-enable retrospective mode if retro_data provided
+        params.mode = 'retrospective'
+        assert file(params.retro_data).isDirectory() :
+        "The provided retro_data path '${params.retro_data}' is not a valid directory."
+        log.info "Auto-enabled retrospective mode with historical data: ${params.retro_data}"
+    }
+    
+    if (params.mode == 'retrospective' && (!params.retro_data || params.retro_data.isEmpty())) {
+        error "Retrospective mode requires --retro_data parameter with path to historical SAMRefiner outputs directory"
+    }
+    
+    log.info "Running in ${params.mode} mode"
 
     // Channel for the SRA run accessions to download
     ch_sra_accession = Channel
@@ -99,6 +115,63 @@ workflow {
         .map { id, _count, sam -> tuple( id, file(sam) ) }
         .combine(ch_ref_fasta)
     )
+
+    // Create channels for surveillance parameters (will be empty if not provided)
+    ch_start_date = Channel.value(params.surveillance_start_date ?: '')
+    ch_end_date = Channel.value(params.surveillance_end_date ?: '')
+    ch_target_lineage = Channel.value(params.surveillance_target_lineage ?: 'JN.1')
+    
+    // Download UShER database once and cache it
+    DOWNLOAD_USHER_DB()
+    
+    // Prepare reference data for surveillance analysis using cached UShER data
+    PREPARE_REFERENCE_DATA(
+        ch_start_date,
+        ch_end_date,
+        ch_target_lineage,
+        DOWNLOAD_USHER_DB.out.usher_db,
+        DOWNLOAD_USHER_DB.out.lineage_definitions
+    )
+    
+    // Handle dual-mode data collection
+    if (params.mode == 'retrospective') {
+        
+        // Collect current run SAMRefiner outputs
+        ch_current_samples = SAM_REFINER.out.tsv
+            .map { _run_id, tsv_files -> tsv_files }
+            .flatten()
+        
+        // Collect historical SAMRefiner outputs from retro_data directory
+        ch_historical_samples = Channel
+            .fromPath("${params.retro_data}/**/*_{covars,nt_calls}.tsv*")
+            .ifEmpty { log.warn "No historical SAMRefiner files found in ${params.retro_data}" }
+        
+        // Mix current + historical for complete dataset
+        ch_all_samrefiner = ch_current_samples
+            .mix(ch_historical_samples)
+            .collect()
+            
+        log.info "Retrospective mode: Combining current samples with historical data from ${params.retro_data}"
+        
+        // Run complete temporal analysis with historical context
+        ANALYZE_TEMPORAL_VARIANTS(
+            ch_all_samrefiner,
+            PREPARE_REFERENCE_DATA.out.sample_metadata,
+            PREPARE_REFERENCE_DATA.out.lineage_mutations,
+            PREPARE_REFERENCE_DATA.out.variant_surveillance
+        )
+        
+        // Generate surveillance reports
+        GENERATE_SURVEILLANCE_REPORTS(
+            ANALYZE_TEMPORAL_VARIANTS.out.temporal_variants,
+            ANALYZE_TEMPORAL_VARIANTS.out.significant_changes,
+            PREPARE_REFERENCE_DATA.out.sample_metadata,
+            PREPARE_REFERENCE_DATA.out.variant_surveillance
+        )
+        
+    } else {
+        log.info "Daily mode: Processing current samples only, skipping surveillance analysis"
+    }
 }
 
 process FETCH_FASTQ {
@@ -282,6 +355,157 @@ process SORT_AND_CONVERT {
     | samtools sort \
     | samtools view -T ${ref_fasta} -@${task.cpus} \
     -o ${run_accession}.SARS2.wg.cram
+    """
+}
+
+// Split expensive operations for optimal caching
+process DOWNLOAD_USHER_DB {
+    
+    tag "usher_db"
+    
+    // Cache UShER database permanently - only re-download if file doesn't exist
+    storeDir "${params.results}/reference_cache/usher"
+    
+    cache 'deep' // Cache based on process definition, not inputs
+    
+    cpus 1
+    memory '2 GB'
+    
+    output:
+    path "public-latest.all.masked.pb.gz", emit: usher_db
+    path "LineageDefinitions.tsv", emit: lineage_definitions
+    
+    when:
+    params.surveillance_start_date && params.surveillance_end_date
+    
+    script:
+    """
+    # Download UShER database (large file, changes infrequently)
+    curl -L -o public-latest.all.masked.pb.gz \\
+        http://hgdownload.soe.ucsc.edu/goldenPath/wuhCor1/UShER_SARS-CoV-2/public-latest.all.masked.pb.gz
+    
+    # Extract lineage definitions
+    matUtils extract -i public-latest.all.masked.pb.gz -C LineageDefinitions.tsv
+    """
+}
+
+process PREPARE_REFERENCE_DATA {
+    
+    tag "reference_data_${start_date}_${end_date}"
+    
+    // Cache results based on date range and parameters
+    storeDir "${params.results}/reference_cache/metadata"
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
+    
+    cache 'standard' // Cache based on inputs - will re-run if date range changes
+    
+    cpus 2
+    memory '4 GB'
+    
+    input:
+    val start_date
+    val end_date
+    val target_lineage
+    path usher_db
+    path lineage_definitions
+    
+    output:
+    path "lineage_mutations_${target_lineage}_${start_date}_${end_date}.tsv", emit: lineage_mutations, optional: true
+    path "variant_surveillance_${start_date}_${end_date}.tsv", emit: variant_surveillance, optional: true  
+    path "sample_metadata_${start_date}_${end_date}.tsv", emit: sample_metadata, optional: true
+    
+    when:
+    start_date && end_date && start_date != '' && end_date != ''
+    
+    script:
+    """
+    prepare_reference_data.py \\
+        --start-date ${start_date} \\
+        --end-date ${end_date} \\
+        --target-lineage ${target_lineage} \\
+        --usher-db ${usher_db} \\
+        --lineage-definitions ${lineage_definitions} \\
+        --lineage-mutations lineage_mutations_${target_lineage}_${start_date}_${end_date}.tsv \\
+        --variant-surveillance variant_surveillance_${start_date}_${end_date}.tsv \\
+        --sample-metadata sample_metadata_${start_date}_${end_date}.tsv \\
+        --exclude-bioprojects ${params.surveillance_exclude_bioprojects ?: 'PRJNA748354 PRJEB44932'} \\
+        --exclude-patterns ${params.surveillance_exclude_patterns ?: 'location:Maryland.*78365'} \\
+        --min-reads ${params.surveillance_min_reads ?: 0}
+    """
+}
+
+process ANALYZE_TEMPORAL_VARIANTS {
+    
+    tag "temporal_analysis_batch"
+    
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
+    
+    cpus 8
+    memory '16 GB'
+    
+    input:
+    path "samrefiner_outputs/*"  // All SAMRefiner outputs as single directory
+    path sample_metadata
+    path lineage_mutations
+    path variant_surveillance
+    
+    output:
+    path "temporal_variants.tsv", emit: temporal_variants, optional: true
+    path "weekly_summary.tsv", emit: weekly_summary, optional: true
+    path "significant_changes.tsv", emit: significant_changes, optional: true
+    
+    when:
+    params.surveillance_start_date && params.surveillance_end_date
+    
+    script:
+    """
+    analyze_temporal_variants.py \\
+        --input-dir samrefiner_outputs \\
+        --sample-metadata ${sample_metadata} \\
+        --lineage-mutations ${lineage_mutations} \\
+        --variant-surveillance ${variant_surveillance} \\
+        --delta-threshold ${params.surveillance_delta_threshold ?: 0.02} \\
+        --count-threshold ${params.surveillance_count_threshold ?: 100} \\
+        --window-weeks ${params.surveillance_window_weeks ?: 3} \\
+        --output-temporal temporal_variants.tsv \\
+        --output-weekly weekly_summary.tsv \\
+        --output-significant significant_changes.tsv
+    """
+}
+
+process GENERATE_SURVEILLANCE_REPORTS {
+    
+    tag "surveillance_reports"
+    
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
+    
+    cpus 4
+    memory '8 GB'
+    
+    input:
+    path temporal_variants
+    path significant_changes
+    path sample_metadata
+    path variant_surveillance
+    
+    output:
+    path "lineage_definitions.json", emit: json_lineages, optional: true
+    path "regional_analysis.tsv", emit: regional_analysis, optional: true
+    path "surveillance_summary.json", emit: summary_stats, optional: true
+    
+    when:
+    params.surveillance_start_date && params.surveillance_end_date
+    
+    script:
+    """
+    generate_surveillance_reports.py \\
+        --temporal-variants ${temporal_variants} \\
+        --significant-changes ${significant_changes} \\
+        --sample-metadata ${sample_metadata} \\
+        --variant-surveillance ${variant_surveillance} \\
+        --output-json lineage_definitions.json \\
+        --output-regional regional_analysis.tsv \\
+        --output-summary surveillance_summary.json
     """
 }
 
