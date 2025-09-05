@@ -43,24 +43,24 @@ workflow {
             single: fastq_files.size() == 1
                 return tuple(sample_id, file(fastq_files[0]))
 
-            // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq" and the second with ".2.fastq",
-            // which is a (mostly) reliable SRA convention
-            paired: fastq_files.size() > 1 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
+            // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq.gz" and the second with ".2.fastq.gz",
+            // which is a (mostly) reliable SRA convention.  Include empty file for merging process
+            paired: fastq_files.size() == 2 && file(fastq_files[0]).getName().endsWith("1.fastq.gz") && file(fastq_files[1]).getName().endsWith("2.fastq.gz")
                 return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]), file("assets/empty"))
 
             // There are a couple common cases of >2 FASTQs per accession that we can handle. The first is where the first two files
-            // end with "1.fastq" and ".2.fastq" and the third ends with "3.fastq". Assuming correct alphanumeric sorting, we handle
+            // end with "1.fastq.gz" and ".2.fastq.gz" and the third ends with "3.fastq.gz". Assuming correct alphanumeric sorting, we handle
             // that in this branch.
-            triple1: fastq_files.size() > 2 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
+            triple1: fastq_files.size() > 2 && file(fastq_files[0]).getName().endsWith("1.fastq.gz") && file(fastq_files[1]).getName().endsWith("2.fastq.gz")
                 return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]), file(fastq_files[2]))
 
             // It's also possible that the third, non-R1/R2 reads are in a FASTQ that doesn't have a numbered suffix, e.g.,
-            // SRR33146255.fastq. When that's the case, that third FASTQ will end up first when the files are sorted by name.
+            // SRR33146255.fastq.gz. When that's the case, that third FASTQ will end up first when the files are sorted by name.
             // We handle that case in this branch by indexing out the second and third FASTQ (groovy/nextflow are 0-indexed)
-            triple2: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("1.fastq") && file(fastq_files[2]).getName().endsWith("2.fastq")
+            triple2: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("1.fastq.gz") && file(fastq_files[2]).getName().endsWith("2.fastq.gz")
                 return tuple(sample_id, file(fastq_files[1]), file(fastq_files[2]), file(fastq_files[0]))
 
-            // If there's just one FASTQ and it isn't in an array.  Last so isFile() on array doesn't through error.
+            // If there's just one FASTQ and it isn't in an array.  Last so isFile() on array doesn't throw an error.
             single1: fastq_files.isFile()
                 return tuple(sample_id, file(fastq_files))
 
@@ -133,10 +133,6 @@ workflow {
         .combine(ch_ref_gbk)
     )
 
-    SORT_AND_CONVERT(
-        TRIM_ENDS.out
-        .combine(ch_ref_fasta)
-    )
 }
 
 process FETCH_FASTQ {
@@ -146,7 +142,7 @@ process FETCH_FASTQ {
     cpus 3
 
     maxRetries 2
-    errorStrategy = { 
+    errorStrategy {
 					task.exitStatus == 3 ? 'ignore' : //  ignore when no files for sample
 					task.attempt <= maxRetries ? 'retry' : 'ignore'
 					}
@@ -155,12 +151,13 @@ process FETCH_FASTQ {
     val run_accession
 
     output:
-    tuple val(run_accession), path("${run_accession}*.fastq")
+    tuple val(run_accession), path("${run_accession}*.fastq.gz")
 
     script:
     """
     prefetch ${run_accession}
     fasterq-dump --split-3 ${run_accession}
+	gzip ${run_accession}*.fastq
     """
 }
 
@@ -170,7 +167,7 @@ process MERGE_PAIRS {
     // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
+    errorStrategy { task.attempt <= maxRetries ? 'retry' : 'ignore' }
 
     cpus 4
 
@@ -178,23 +175,23 @@ process MERGE_PAIRS {
     tuple val(run_accession), path(reads1), path(reads2), path(reads3)
 
     output:
-    tuple val(run_accession), path("${run_accession}.merged.fastq"), emit: merged_fq
-    tuple val(run_accession), path("${run_accession}.unmerged.fastq"), emit: unmerged_fq
+    tuple val(run_accession), path("${run_accession}.merged.fastq.gz"), emit: merged_fq
+    tuple val(run_accession), path("${run_accession}.unmerged.fastq.gz"), emit: unmerged_fq
 
     script:
     """
 	bbmerge.sh \
 	in1=`realpath ${reads1}` \
 	in2=`realpath ${reads2}` \
-	out=${run_accession}.merged.fastq \
-	outu=${run_accession}.unmerged.fastq \
+	out=${run_accession}.merged.fastq.gz \
+	outu=${run_accession}.unmerged.fastq.gz \
     qtrim=t \
 	ihist=${run_accession}_ihist_merge.txt \
 	threads=${task.cpus} \
 	-eoom
 
 	# if orphaned reads file, cat to unmerged
-	cat ${reads3} >> ${run_accession}.unmerged.fastq
+	cat ${reads3} >> ${run_accession}.unmerged.fastq.gz
 
 	"""
 }
@@ -205,7 +202,7 @@ process MAP_MERGED_TO_REF {
     // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
+    errorStrategy { task.attempt <= maxRetries ? 'retry' : 'ignore' }
 
     cpus 4
 
@@ -213,14 +210,15 @@ process MAP_MERGED_TO_REF {
     tuple val(run_accession), path(merged_file), path(ref_fasta)
 
     output:
-    tuple val(run_accession), path("${run_accession}.merged.sam")
+    tuple val(run_accession), path("${run_accession}.merged.cram")
 
     script:
     """
     # run minimap2
     minimap2 -a ${ref_fasta} ${merged_file} \
     --sam-hit-only --secondary=no \
-    -o ${run_accession}.merged.sam
+    | samtools view -T ${ref_fasta} -@${task.cpus} \
+	-o ${run_accession}.merged.cram
     """
 }
 
@@ -230,7 +228,7 @@ process MAP_UNMERGED_TO_REF {
     // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
+    errorStrategy { task.attempt <= maxRetries ? 'retry' : 'ignore' }
 
     cpus 4
 
@@ -238,25 +236,25 @@ process MAP_UNMERGED_TO_REF {
     tuple val(run_accession), path(unmerged_file), path(ref_fasta)
 
     output:
-    tuple val(run_accession), path("${run_accession}.unmerged.sam")
+    tuple val(run_accession), path("${run_accession}.unmerged.cram")
 
     script:
     """
     # run minimap2
     minimap2 -a ${ref_fasta} ${unmerged_file} \
     --sam-hit-only --secondary=no \
-    -o ${run_accession}.unmerged.sam
-
+    | samtools view -T ${ref_fasta} -@${task.cpus} \
+    -o ${run_accession}.unmerged.cram
     """
 }
 
 process  TRIM_ENDS {
 
     tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
+    errorStrategy { task.attempt <= maxRetries ? 'retry' : 'ignore' }
 
     cpus 1
 
@@ -264,16 +262,14 @@ process  TRIM_ENDS {
     tuple val(run_accession), path(merged_sam), path(unmerged_sam)
 
     output:
-    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.cut.sam")
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.cut.cram")
 
     script:
     """
-    drtrimsam.py --in_file ${merged_sam} --out_file ${run_accession}.merged.cut.sam --ltrim ${params.end_trim_bases} --rtrim ${params.end_trim_bases}
-    drtrimsam.py --in_file ${unmerged_sam} --out_file ${run_accession}.cut.sam --ltrim ${params.end_trim_bases}
-    cat ${run_accession}.merged.cut.sam >> ${run_accession}.cut.sam
+    drtrimsam.py --in_file ${merged_sam} --in_file2 ${unmerged_sam} --out_file ${run_accession}.cut.cram --trim ${params.end_trim_bases}
 
-	# count the records in the SAM file
-    NUM_RECORDS=\$(cat ${run_accession}.cut.sam | wc -l )
+	# count the records in the cram file
+    NUM_RECORDS=\$(cat ${run_accession}.cut.cram.count)
     """
 }
 
@@ -284,53 +280,23 @@ process SAM_REFINER {
     publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
+    errorStrategy { task.attempt <= maxRetries ? 'retry' : 'ignore' }
 
     cpus params.sam_refiner_procs
 
     input:
-    tuple val(run_accession), path(sam), path(ref_gbk)
+    tuple val(run_accession), path(cram), path(ref_gbk)
 
     output:
-    tuple val(run_accession), path("${run_accession}*.tsv.gz"), emit: tsv
+    tuple val(run_accession), path("${run_accession}*.tsv.gz")
 
     script:
     """
-    SAM_Refiner -r ${ref_gbk} -S ${sam} \
+    SAM_Refiner -r ${ref_gbk} -S ${cram} \
     --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --max_covar 1 --max_dist 100 \
-    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \
-    --ntcover 1 --AAreport 1 --chim_rm 0 --deconv 0 --mp ${task.cpus} && \
-    gzip ${run_accession}*.tsv
+    --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \
+    --ntcover 1 --AAreport 1 --chim_rm 0 --deconv 0 --mp ${task.cpus} &&
+	gzip ${run_accession}*.tsv
     """
 }
 
-process SORT_AND_CONVERT {
-
-    tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode, overwrite: true
-
-    maxRetries 2
-    errorStrategy = { task.attempt <= maxRetries ? 'retry' : 'ignore' }
-
-    cpus 8
-
-    input:
-    tuple val(run_accession), val(count), path(sam), path(ref_fasta)
-
-    output:
-    tuple val(run_accession), path("${run_accession}.cut.cram")
-
-    script:
-	if (count == "0") {
-	"""
-	touch ${run_accession}.cut.cram
-	"""
-	}
-	else {
-    """
-    sort -n -k 4 ${sam} \
-    | samtools view -T ${ref_fasta} -@${task.cpus} \
-    -o ${run_accession}.cut.cram
-    """
-	}
-}
