@@ -73,20 +73,20 @@ workflow {
         )
     )
 
-    DEREPLICATE_READS(
-        MERGE_PAIRS.out.mix(ch_sorted_fastqs.single)
-    )
-
-    TRIM_ENDS(
-        DEREPLICATE_READS.out
-    )
-
     MAP_TO_REF(
-        TRIM_ENDS.out.combine(ch_ref_fasta)
+        MERGE_PAIRS.out.mix(ch_sorted_fastqs.single).combine(ch_ref_fasta)
+    )
+
+    TRIM_ALIGNED_ENDS(
+        MAP_TO_REF.out
+            .filter { _id, count, _sam ->
+                int count_int = count as Integer
+                count_int  > 0 }
+            .combine(ch_ref_fasta)
     )
 
     SAM_REFINER(
-        MAP_TO_REF.out
+        TRIM_ALIGNED_ENDS.out
         .filter { _id, count, _sam ->
             int count_int = count as Integer
             count_int  > 0 }
@@ -95,7 +95,7 @@ workflow {
     )
 
     SORT_AND_CONVERT(
-        MAP_TO_REF.out
+        TRIM_ALIGNED_ENDS.out
         .map { id, _count, sam -> tuple( id, file(sam) ) }
         .combine(ch_ref_fasta)
     )
@@ -126,7 +126,7 @@ process FETCH_FASTQ {
 process MERGE_PAIRS {
 
     tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
     maxRetries 2
@@ -137,80 +137,22 @@ process MERGE_PAIRS {
     tuple val(run_accession), path(reads1), path(reads2)
 
     output:
-    tuple val(run_accession), path("${run_accession}.merged.fastq")
+    tuple val(run_accession), path("${run_accession}.merged.fastq.gz")
 
     script:
     """
-	bbmerge.sh \
-	in1=`realpath ${reads1}` \
-	in2=`realpath ${reads2}` \
-	out=${run_accession}.merged.fastq \
-	outu=${run_accession}.unmerged.fastq \
-    qtrim=t \
-	ihist=${run_accession}_ihist_merge.txt \
-	threads=${task.cpus} \
-	-eoom
-	
-    # Concat the unmerged reads to the end of the merged reads file
-    cat ${run_accession}.unmerged.fastq >> ${run_accession}.merged.fastq
+    merge_and_tag.sh \\
+    -1 ${reads1} \\
+    -2 ${reads2} \\
+    -o ${run_accession} \\
+    -t ${task.cpus}
 	"""
-}
-
-process DEREPLICATE_READS {
-
-    tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
-
-    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
-
-    cpus 1
-
-    input:
-    tuple val(run_accession), path(fastq)
-
-    output:
-    tuple val(run_accession), path("${run_accession}.collapsed.fasta")
-
-    script:
-    """
-    derep.py ${fastq} ${run_accession}.collapsed.fasta 1
-    """
-}
-
-process TRIM_ENDS {
-
-    tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
-
-    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
-
-    cpus 3
-
-    input:
-    tuple val(run_accession), path(fasta)
-
-    output:
-    tuple val(run_accession), path("${run_accession}*trimmed.fasta")
-
-    script:
-    if (params.end_trim_bases == 0 || params.end_trim_bases == false || params.end_trim_bases == null) {
-        """
-        cp ${fasta} ${run_accession}.collapsed.untrimmed.fasta
-        """
-    }
-    else {
-        """
-        cat ${fasta} \
-        | seqkit subseq -r ${params.end_trim_bases}:-${params.end_trim_bases} \
-        -o ${run_accession}.collapsed.${params.end_trim_bases}trimmed.fasta
-        """
-    }
 }
 
 process MAP_TO_REF {
 
     tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -220,17 +162,53 @@ process MAP_TO_REF {
     tuple val(run_accession), path(derep_fa_reads), path(ref_fasta)
 
     output:
-    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.sam")
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.bam")
 
     script:
     """
     # run minimap2
     minimap2 -a ${ref_fasta} ${derep_fa_reads} \
     --sam-hit-only --secondary=no \
-    -o ${run_accession}.SARS2.wg.sam
+    | samtools view -@ ${task.cpus} -b -o ${run_accession}.SARS2.wg.bam
 
     # count the records in the SAM file
-    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.sam)
+    NUM_RECORDS=\$(samtools view -@ ${task.cpus} -c ${run_accession}.SARS2.wg.bam)
+    """
+}
+
+process TRIM_ALIGNED_ENDS {
+
+    tag "${run_accession}"
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
+    cpus 1
+
+    input:
+    tuple val(run_accession), val(pre_trim_count), path(alignment), path(ref)
+
+    output:
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.trimmed.cram")
+
+    script:
+    """
+    echo "Trimmimg ends on ${pre_trim_count} from ${alignment}..." >&2
+    trim_aligned_reads.py \
+    --in ${alignment} \
+    --out "${run_accession}.SARS2.wg.trimmed.cram" \
+    --ref ${ref} \
+    --merged-left ${params.end_trim_bases} \
+    --merged-right ${params.end_trim_bases} \
+    --r1-left ${params.end_trim_bases} \
+    --r2-right ${params.end_trim_bases} \
+    --min-len 20 \
+    -v
+
+    # count the records in the SAM file
+    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.trimmed.cram)
+
+    echo "End-trimming successful. \$NUM_RECORDS reads remain." >&2
     """
 }
 
