@@ -202,6 +202,8 @@ process TRIM_ALIGNED_ENDS {
     --merged-right ${params.end_trim_bases} \
     --r1-left ${params.end_trim_bases} \
     --r2-right ${params.end_trim_bases} \
+    --single-left ${params.end_trim_bases} \
+    --single-right ${params.end_trim_bases} \
     --min-len 20 \
     -v
 

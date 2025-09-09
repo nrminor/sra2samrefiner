@@ -49,6 +49,8 @@ class TrimPolicy:
     merged_right: int = 30
     r1_left: int = 30
     r2_right: int = 30
+    single_left: int = 30  # NEW: left trim for single-end/untagged reads
+    single_right: int = 30  # NEW: right trim for single-end/untagged reads
     min_len: int = 20  # drop reads shorter than this AFTER trimming
 
 
@@ -81,7 +83,8 @@ class ReadCategory(Enum):
             case ReadCategory.UNMERGED_R2:
                 return 0, max(0, policy.r2_right)
             case ReadCategory.OTHER:
-                return 0, 0
+                # Apply single-end trimming for untagged reads (single-end, Nanopore, etc.)
+                return max(0, policy.single_left), max(0, policy.single_right)
 
 
 # ----------------------------- LOGGING SETUP ------------------------------- #
@@ -89,13 +92,20 @@ class ReadCategory(Enum):
 
 def configure_logging(verbose: int, quiet: int) -> None:
     """
-    Base at INFO (0). Positive → louder, negative → quieter.
-    Map: +1=DEBUG, +2..=TRACE | -1=WARNING, -2=ERROR, -3..=CRITICAL
+    Base at SUCCESS (0). Positive → louder (more verbose), negative → quieter.
+    Map:
+      +3.. = TRACE
+      +2   = DEBUG
+      +1   = INFO
+       0   = SUCCESS
+      -1   = WARNING
+      -2   = ERROR
+      <=-3 = CRITICAL
     """
     logger.remove()
-    level_str = "INFO"
-    match verbose - quiet:
-        case delta if delta >= 2:  # noqa: PLR2004
+    delta = verbose - quiet
+    match delta:
+        case d if d >= 3:
             level_str = "TRACE"
         case 2:
             level_str = "DEBUG"
@@ -107,13 +117,8 @@ def configure_logging(verbose: int, quiet: int) -> None:
             level_str = "WARNING"
         case -2:
             level_str = "ERROR"
-        case delta if delta < -2:  # noqa: PLR2004
+        case d if d <= -3:
             level_str = "CRITICAL"
-        case _:
-            level_str = "INFO"
-            logger.add(sys.stderr, level=level_str)
-            logger.warning("Invalid verbosity settings provided; defaulting to INFO.")
-            return
     logger.add(sys.stderr, level=level_str)
     logger.debug(f"Logger configured at level: {level_str}")
 
@@ -160,6 +165,16 @@ class Cigar(list[CigarOp]):
         Append (op, ln), merging with the last run if `op` matches.
         Ignores non-positive lengths.
         """
+        # Positive invariant: operation code must be valid CIGAR operation (0-8)
+        assert 0 <= op <= 8, f"Invalid CIGAR operation code {op}: must be 0-8 (M,I,D,N,S,H,P,=,X)"
+
+        # Negative invariant: length must not cause integer overflow when added
+        if self and self[-1].op == op:
+            last = self[-1]
+            assert last.length + ln <= (1 << 28) - 1, (
+                f"CIGAR length overflow: {last.length} + {ln} exceeds maximum safe integer"
+            )
+
         if ln <= 0:
             return
         if self and self[-1].op == op:
@@ -181,12 +196,25 @@ def _consume_from_left(cig: Cigar, trim_q: int) -> tuple[Cigar, int]:
         How many reference bases were consumed from {M,=,X} while trimming.
         Add this to `reference_start`.
     """
+    # Positive invariant: trim amount must be non-negative
+    assert trim_q >= 0, f"Left trim amount must be non-negative, got {trim_q}"
+
+    # Negative invariant: CIGAR must contain valid operations only
+    if cig:
+        assert all(0 <= run.op <= 8 and run.length > 0 for run in cig), (
+            f"CIGAR contains invalid operations: {[(run.op, run.length) for run in cig]}"
+        )
+
     if trim_q <= 0 or not cig:
         return cig, 0
+
+    # Calculate total query bases available for validation
+    total_query_bases = sum(run.length for run in cig if run.op in QRY_CONSUME)
 
     out = Cigar()
     remaining = trim_q
     ref_advance = 0
+    total_consumed_query = 0
     i = 0
 
     while i < len(cig) and remaining > 0:
@@ -195,6 +223,7 @@ def _consume_from_left(cig: Cigar, trim_q: int) -> tuple[Cigar, int]:
             take = min(run.length, remaining)
             keep_len = run.length - take
             remaining -= take
+            total_consumed_query += take
             if run.op in BOTH_CONSUME:
                 ref_advance += take
             out.push_compact(run.op, keep_len)
@@ -208,6 +237,18 @@ def _consume_from_left(cig: Cigar, trim_q: int) -> tuple[Cigar, int]:
         tail = cig[j]
         out.push_compact(tail.op, tail.length)
 
+    # Positive invariant: reference advance must be non-negative and bounded
+    assert ref_advance >= 0, f"Reference advance cannot be negative: {ref_advance}"
+    assert total_consumed_query <= min(trim_q, total_query_bases), (
+        f"Consumed {total_consumed_query} query bases but trim_q={trim_q}, total_available={total_query_bases}"
+    )
+
+    # Negative invariant: output CIGAR must not have zero-length operations
+    if out:
+        assert all(run.length > 0 for run in out), (
+            f"Output CIGAR contains zero-length operations: {[(run.op, run.length) for run in out]}"
+        )
+
     return out, ref_advance
 
 
@@ -216,11 +257,24 @@ def _consume_from_right(cig: Cigar, trim_q: int) -> Cigar:
     Consume `trim_q` query-bases from the RIGHT edge of `cig`.
     Reference start is unaffected by definition.
     """
+    # Positive invariant: trim amount must be non-negative
+    assert trim_q >= 0, f"Right trim amount must be non-negative, got {trim_q}"
+
+    # Negative invariant: CIGAR must contain valid operations only
+    if cig:
+        assert all(0 <= run.op <= 8 and run.length > 0 for run in cig), (
+            f"CIGAR contains invalid operations: {[(run.op, run.length) for run in cig]}"
+        )
+
     if trim_q <= 0 or not cig:
         return cig
 
+    # Calculate total query bases available for validation
+    total_query_bases = sum(run.length for run in cig if run.op in QRY_CONSUME)
+
     out_rev = Cigar()
     remaining = trim_q
+    total_consumed_query = 0
 
     # Build reversed output with compaction
     for run in reversed(cig):
@@ -228,6 +282,7 @@ def _consume_from_right(cig: Cigar, trim_q: int) -> Cigar:
             take = min(run.length, remaining)
             keep_len = run.length - take
             remaining -= take
+            total_consumed_query += take
             out_rev.push_compact(run.op, keep_len)
         else:
             out_rev.push_compact(run.op, run.length)
@@ -236,6 +291,18 @@ def _consume_from_right(cig: Cigar, trim_q: int) -> Cigar:
     out = Cigar()
     for run in reversed(out_rev):
         out.push_compact(run.op, run.length)
+
+    # Positive invariant: consumed bases must not exceed available or requested
+    assert total_consumed_query <= min(trim_q, total_query_bases), (
+        f"Right trim consumed {total_consumed_query} query bases but trim_q={trim_q}, total_available={total_query_bases}"
+    )
+
+    # Negative invariant: output CIGAR must not have zero-length operations
+    if out:
+        assert all(run.length > 0 for run in out), (
+            f"Output CIGAR contains zero-length operations: {[(run.op, run.length) for run in out]}"
+        )
+
     return out
 
 
@@ -246,8 +313,12 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
       - For reverse reads, the 5' end is on the RIGHT of the CIGAR.
       - Sequence slicing is always in read orientation.
     """
+    # Positive invariant: trim amounts are normalized to non-negative
     left = max(left, 0)
     right = max(right, 0)
+    assert left >= 0 and right >= 0, (
+        f"Normalized trim amounts must be non-negative: left={left}, right={right}"
+    )
 
     seq: str | None = aln.query_sequence
     if seq is None:
@@ -256,11 +327,35 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
         )
         return
 
+    # Positive invariant: sequence and qualities must have consistent lengths
     qual = aln.query_qualities  # array('B') or None
+    if qual is not None:
+        assert len(qual) == len(seq), (
+            f"Sequence/quality length mismatch for '{aln.query_name}': seq={len(seq)}, qual={len(qual)}"
+        )
+
     cig_raw = aln.cigartuples
     if cig_raw is None:
-        new_seq = seq[left : len(seq) - right if right else None]
-        new_qual = None if qual is None else qual[left : len(seq) - right if right else None]
+        # Handle reads without CIGAR (unmapped) - use same safe boundary logic as main path
+        seq_len = len(seq)
+        cut_left = min(left, seq_len)
+        cut_right = min(right, max(seq_len - cut_left, 0))
+        keep_end = seq_len - cut_left - cut_right
+
+        # Apply safe slicing with boundary checking
+        new_seq = "" if keep_end <= 0 else seq[cut_left : cut_left + keep_end]
+        new_qual = (
+            None
+            if qual is None
+            else (None if keep_end <= 0 else qual[cut_left : cut_left + keep_end])
+        )
+
+        # Negative invariant: trimming cannot result in negative-length sequences
+        expected_new_len = max(0, seq_len - left - right)
+        assert len(new_seq) == expected_new_len, (
+            f"Sequence trimming error for '{aln.query_name}': expected {expected_new_len}, got {len(new_seq)}"
+        )
+
         aln.query_sequence = new_seq
         aln.query_qualities = new_qual
         logger.debug(f"Trimmed sequence/qualities only (no CIGAR) for '{aln.query_name}'.")
@@ -268,6 +363,12 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
 
     cig: Cigar = Cigar.from_pysam(cig_raw)
     ref_start_before = aln.reference_start
+
+    # Positive invariant: reference start must be non-negative if set
+    if ref_start_before is not None:
+        assert ref_start_before >= 0, (
+            f"Invalid reference_start for '{aln.query_name}': {ref_start_before} (must be non-negative)"
+        )
 
     # Strand-aware CIGAR trimming amounts
     cig_left = right if aln.is_reverse else left
@@ -280,7 +381,12 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
 
     if cig_left > 0:
         cig, ref_advance = _consume_from_left(cig, cig_left)
-        aln.reference_start = ref_start_before + ref_advance
+        new_ref_start = ref_start_before + ref_advance
+        # Negative invariant: new reference start cannot be negative
+        assert new_ref_start >= 0, (
+            f"Reference start underflow for '{aln.query_name}': {ref_start_before} + {ref_advance} = {new_ref_start}"
+        )
+        aln.reference_start = new_ref_start
     if cig_right > 0:
         cig = _consume_from_right(cig, cig_right)
 
@@ -289,8 +395,31 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
     cut_left = min(left, qlen)
     cut_right = min(right, max(qlen - cut_left, 0))
     keep_end = qlen - cut_left - cut_right
+
+    # Positive invariant: trimming calculations must be arithmetically sound
+    assert cut_left >= 0 and cut_right >= 0 and keep_end >= 0, (
+        f"Invalid trim calculations for '{aln.query_name}': cut_left={cut_left}, cut_right={cut_right}, keep_end={keep_end}"
+    )
+    assert cut_left + cut_right + keep_end == qlen, (
+        f"Trim arithmetic error for '{aln.query_name}': {cut_left} + {cut_right} + {keep_end} != {qlen}"
+    )
+
     new_seq = "" if keep_end <= 0 else seq[cut_left : cut_left + keep_end]
     new_qual = None if qual is None else qual[cut_left : cut_left + keep_end]
+
+    # Verify CIGAR/sequence consistency after trimming
+    new_cigar_query_len = sum(op[1] for op in cig.to_pysam() if op[0] in QRY_CONSUME)
+
+    # Negative invariant: new sequence length must match CIGAR query consumption
+    assert len(new_seq) == new_cigar_query_len, (
+        f"CIGAR/sequence mismatch after trimming '{aln.query_name}': seq_len={len(new_seq)}, cigar_query_len={new_cigar_query_len}"
+    )
+
+    # Positive invariant: quality array must match sequence length if present
+    if new_qual is not None:
+        assert len(new_qual) == len(new_seq), (
+            f"Quality/sequence length mismatch after trimming '{aln.query_name}': qual={len(new_qual)}, seq={len(new_seq)}"
+        )
 
     aln.cigartuples = cig.to_pysam()
     aln.query_sequence = new_seq
@@ -331,7 +460,23 @@ def open_alignment(
       to preserve header (lossless).
     - Otherwise, pass a header dict.
     """
+    # Positive invariant: path must be a non-empty string
+    assert isinstance(path, str) and len(path) > 0, (
+        f"Path must be non-empty string, got: {repr(path)}"
+    )
+
+    # Negative invariant: reference path must be valid if provided
+    if reference is not None:
+        assert isinstance(reference, str) and len(reference) > 0, (
+            f"Reference path must be non-empty string if provided, got: {repr(reference)}"
+        )
+
     mode = _io_mode_from_ext(path, write)
+
+    # Positive invariant: mode must be valid pysam mode string
+    valid_modes = {"r", "rb", "rc", "w", "wb", "wc"}
+    assert mode in valid_modes, f"Invalid pysam mode '{mode}' for path '{path}'"
+
     kwargs = {}
     if path.lower().endswith(".cram") and reference is None:
         logger.warning(
@@ -344,11 +489,16 @@ def open_alignment(
     action = "write" if write else "read"
     logger.debug(f"Opening for {action}: {path} (mode={mode})")
     if write:
+        # Negative invariant: writing requires proper template or header
+        assert template_or_header is not None, (
+            f"Writing to '{path}' requires template_or_header but got None"
+        )
+
         if isinstance(template_or_header, pysam.AlignmentFile):
             return pysam.AlignmentFile(path, mode, template=template_or_header, **kwargs)
         if isinstance(template_or_header, dict):
             return pysam.AlignmentFile(path, mode, header=template_or_header, **kwargs)
-        msg = "Writing requires either a template AlignmentFile or a header dict."
+        msg = f"Writing requires either a template AlignmentFile or a header dict, got {type(template_or_header)}"
         logger.error(msg)
         raise ValueError(msg)
     return pysam.AlignmentFile(path, mode, **kwargs)
@@ -390,35 +540,64 @@ def process_stream(
     Stream input -> output in batches, trimming per read-name class.
     - Drops unmapped, secondary, and supplementary alignments.
     - Optionally drops untagged reads (if you only want labeled ones).
+    - For untagged reads that are kept, applies policy.single_left/right.
     Returns counts: (kept, dropped_unmapped_or_nonprimary, dropped_too_short)
     """
+    # Positive invariant: batch size must be positive
+    assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
+
+    # Positive invariant: policy must have valid trim values
+    assert policy.min_len >= 0, f"Policy min_len must be non-negative, got {policy.min_len}"
+    assert policy.merged_left >= 0 and policy.merged_right >= 0, (
+        f"Policy merged trim values must be non-negative: left={policy.merged_left}, right={policy.merged_right}"
+    )
+    assert policy.r1_left >= 0 and policy.r2_right >= 0, (
+        f"Policy unmerged trim values must be non-negative: r1_left={policy.r1_left}, r2_right={policy.r2_right}"
+    )
+    assert policy.single_left >= 0 and policy.single_right >= 0, (
+        f"Policy single-end trim values must be non-negative: single_left={policy.single_left}, single_right={policy.single_right}"
+    )
+
     kept = 0
-    dropped_flag = 0
-    dropped_short = 0
+    dropped_flag = 0  # unmapped / secondary / supplementary
+    dropped_short = 0  # too short after (or predicted) trimming
+    dropped_primary_other = 0  # primary dropped due to --drop-untagged
     seen_primary = 0
 
     for batch in batched(inp, batch_size):
         logger.debug(f"Processing batch of size {len(batch)}")
         for aln in batch:
-            # primary-only
+            # non-primary → drop & count
             if aln.is_unmapped or aln.is_secondary or aln.is_supplementary:
                 dropped_flag += 1
                 continue
 
+            # primary from here on
             seen_primary += 1
             if seen_primary % DEBUG_EVERY == 0:
                 logger.debug(
                     f"Progress: primary={seen_primary}, kept={kept}, "
-                    f"dropped_flag={dropped_flag}, dropped_short={dropped_short}",
+                    f"dropped_nonprimary={dropped_flag}, dropped_primary_other={dropped_primary_other}, "
+                    f"dropped_short={dropped_short}",
                 )
 
             category = ReadCategory.classify(aln.query_name)
+
             if category is ReadCategory.OTHER and drop_untagged:
-                dropped_flag += 1
-                logger.debug(f"Dropping untagged read '{aln.query_name}' due to --drop-untagged.")
+                dropped_primary_other += 1
+                logger.debug(
+                    f"Dropping untagged primary read '{aln.query_name}' due to --drop-untagged."
+                )
                 continue
 
-            left, right = category.trim_extents(policy)
+            # Determine trim extents
+            if category is ReadCategory.OTHER:
+                # Apply single-end policy to untagged reads that we keep
+                left, right = max(0, policy.single_left), max(0, policy.single_right)
+            else:
+                left, right = category.trim_extents(policy)
+
+            # Fast-path: no trimming → check length & write/drop
             if left == 0 and right == 0:
                 qlen = aln.query_length or (len(aln.query_sequence) if aln.query_sequence else 0)
                 if qlen < policy.min_len:
@@ -431,10 +610,43 @@ def process_stream(
                 kept += 1
                 continue
 
-            logger.debug(f"Trimming {category.name}: left={left} right={right}")
+            # Early-drop heuristic: predicted post-trim length in read orientation
+            qlen0 = aln.query_length or (len(aln.query_sequence) if aln.query_sequence else 0)
+            predicted_len = max(0, qlen0 - left - right)
+            if predicted_len < policy.min_len:
+                dropped_short += 1
+                logger.debug(
+                    f"Dropping short (predicted post-trim) read '{aln.query_name}': "
+                    f"{qlen0} - {left} - {right} = {predicted_len} < min_len={policy.min_len}",
+                )
+                continue
+
+            # Perform trimming (sequence/quals/CIGAR/ref_start updated consistently)
+            if category is ReadCategory.OTHER:
+                logger.debug(
+                    f"Trimming untagged/single-end read '{aln.query_name}': left={left} right={right}"
+                )
+            else:
+                logger.debug(
+                    f"Trimming {category.name} read '{aln.query_name}': left={left} right={right}"
+                )
+
+            pre_trim_seq_len = len(aln.query_sequence) if aln.query_sequence else 0
             trim_alignment_in_place(aln, left, right)
 
-            new_len = len(aln.query_sequence or "")
+            # Post-trim validation and final length check
+            new_seq = aln.query_sequence or ""
+            new_qual = aln.query_qualities
+            new_len = len(new_seq)
+
+            if new_qual is not None:
+                assert len(new_qual) == new_len, (
+                    f"Post-trim sequence/quality mismatch for '{aln.query_name}': seq={new_len}, qual={len(new_qual)}"
+                )
+            assert new_len <= pre_trim_seq_len, (
+                f"Trimming increased sequence length for '{aln.query_name}': {pre_trim_seq_len} -> {new_len}"
+            )
+
             if new_len < policy.min_len:
                 dropped_short += 1
                 logger.debug(
@@ -445,9 +657,24 @@ def process_stream(
             outp.write(aln)
             kept += 1
 
-    logger.info(
-        f"Process summary — kept={kept}, dropped_flag={dropped_flag}, dropped_short={dropped_short}",
+    # Final invariants: counters must be consistent
+    total_processed = kept + dropped_flag + dropped_short + dropped_primary_other
+    assert kept >= 0 and dropped_flag >= 0 and dropped_short >= 0 and dropped_primary_other >= 0, (
+        f"Counters cannot be negative: kept={kept}, dropped_nonprimary={dropped_flag}, "
+        f"dropped_primary_other={dropped_primary_other}, dropped_short={dropped_short}"
     )
+    assert seen_primary == kept + dropped_short + dropped_primary_other, (
+        f"Primary read count inconsistency: seen={seen_primary}, kept={kept}, "
+        f"dropped_short={dropped_short}, dropped_primary_other={dropped_primary_other}"
+    )
+
+    logger.info(
+        f"Process totals — processed={total_processed}, kept={kept}, "
+        f"dropped_nonprimary={dropped_flag}, dropped_primary_other={dropped_primary_other}, "
+        f"dropped_short={dropped_short}"
+    )
+
+    # Preserve original return API: (kept, dropped_unmapped_or_nonprimary, dropped_too_short)
     return kept, dropped_flag, dropped_short
 
 
@@ -495,6 +722,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--r1-left", type=int, default=30, help="Left trim for unmerged R1 reads")
     p.add_argument("--r2-right", type=int, default=30, help="Right trim for unmerged R2 reads")
+    p.add_argument(
+        "--single-left", type=int, default=30, help="Left trim for single-end/untagged reads"
+    )
+    p.add_argument(
+        "--single-right", type=int, default=30, help="Right trim for single-end/untagged reads"
+    )
     p.add_argument("--min-len", type=int, default=20, help="Minimum read length after trimming")
 
     # Streaming
@@ -504,7 +737,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--drop-untagged",
         action="store_true",
-        help="If set, drop reads that are not labeled MERGED_/UNMERGED_",
+        help="If set, drop reads that are not labeled MERGED_/UNMERGED_ (otherwise single-end trimming is applied)",
     )
 
     # Verbosity: -v/-vv/-vvv or -q/-qq/-qqq (mutually exclusive)
@@ -537,6 +770,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         merged_right=max(0, args.merged_right),
         r1_left=max(0, args.r1_left),
         r2_right=max(0, args.r2_right),
+        single_left=max(0, args.single_left),
+        single_right=max(0, args.single_right),
         min_len=max(0, args.min_len),
     )
     logger.debug(f"TrimPolicy: {policy}")
@@ -566,7 +801,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         input_alignment.close()
 
     logger.success(
-        f"Kept: {kept} | Dropped (unmapped/secondary/supplementary/untagged): {dropped_flag} | "
+        f"Kept: {kept} | Dropped (unmapped/secondary/supplementary): {dropped_flag} | "
         f"Dropped (too short after trim): {dropped_short}",
     )
     logger.info("Trimming run complete.")
