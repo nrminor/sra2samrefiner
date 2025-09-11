@@ -381,12 +381,14 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
 
     if cig_left > 0:
         cig, ref_advance = _consume_from_left(cig, cig_left)
-        new_ref_start = ref_start_before + ref_advance
-        # Negative invariant: new reference start cannot be negative
-        assert new_ref_start >= 0, (
-            f"Reference start underflow for '{aln.query_name}': {ref_start_before} + {ref_advance} = {new_ref_start}"
-        )
-        aln.reference_start = new_ref_start
+        if ref_start_before is not None:
+            new_ref_start = ref_start_before + ref_advance
+            # Negative invariant: new reference start cannot be negative
+            assert new_ref_start >= 0, (
+                f"Reference start underflow for '{aln.query_name}': {ref_start_before} + {ref_advance} = {new_ref_start}"
+            )
+            aln.reference_start = new_ref_start
+        # If ref_start_before is None, leave it as None (unmapped read)
     if cig_right > 0:
         cig = _consume_from_right(cig, cig_right)
 

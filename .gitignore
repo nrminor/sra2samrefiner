@@ -41,3 +41,13 @@
 !examples
 !examples/chtc_executable.sh
 
+# tests
+!/tests
+!/tests/README.md
+!/tests/TEST_SUITE_DOCUMENTATION.md
+!/tests/*test*.py
+!/tests/data
+!/tests/data/*.bam
+!/tests/data/*.bam.bai
+!/tests/data/*.sam
+!/tests/data/*.cram
