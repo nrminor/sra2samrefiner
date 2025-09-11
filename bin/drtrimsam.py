@@ -116,19 +116,25 @@ def parse_file(file, left, right):
                 below_min += 1
                 continue
             seq = read.query_sequence
-            if left > 0:
-                seq = seq[left:] # trim actually nt seq
-            if right > 0:
-                seq = seq[:-right] # trim actually nt seq
+            
+            ltrim = left
+            rtrim = right
+            if read.flag == 16:
+                ltrim = right
+                rtrim = left
+            if ltrim > 0:
+                seq = seq[ltrim:] # trim actually nt seq
+            if rtrim > 0:
+                seq = seq[:-rtrim] # trim actually nt seq
             try: # add to count of unique seq if exist and continue to skip unnecssary reprocessing
                 seq_dict[seq]['count'] += 1
                 continue
             except KeyError:
                 cig = read.cigartuples
-                if left > 0: # 5' recalc
-                    start_pos = read.reference_start + left # initial recalc of start pos
+                if ltrim > 0: # 5' recalc
+                    start_pos = read.reference_start + ltrim # initial recalc of start pos
                     # iterate through cigar tuple list to recalculate it for trimmed sequence
-                    to_trim = left
+                    to_trim = ltrim
                     for i in range(0, len(cig)):
                         if to_trim == 0: # don't continue loop if all the trimming has been accounted for
                             break
@@ -148,9 +154,9 @@ def parse_file(file, left, right):
                             cig[i] = (cig[i][0], (cig[i][1] - to_trim)) # recalc cigar run length
                             break
 
-                if right > 0: # 3' recalc
+                if rtrim > 0: # 3' recalc
                     # iterate through cigar tuple list in reverse to recalculate it for trimmed sequence
-                    to_trim = right
+                    to_trim = rtrim
                     for i in range(len(cig)-1, -1, -1):
                         if cig[i][0] in (2, 5): # hard clipping and del entries removed
                             cig[i] = '' # functionally remove entry
