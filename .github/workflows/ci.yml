@@ -76,7 +76,7 @@ jobs:
       - name: Test Python Imports in UV Environment
         run: |
           uv run python -c "
-          import biopython
+          import Bio
           import loguru  
           import pandas
           import polars
@@ -97,6 +97,16 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
           cache: true
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
+        with:
+          cache: true
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
           
       - name: Install Dependencies
         run: pixi install --locked
@@ -211,9 +221,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
-      - name: Setup Pixi
-        uses: prefix-dev/setup-pixi@v0.8.1
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
         with:
           cache: true
           
@@ -225,22 +235,22 @@ jobs:
           echo "Testing standalone Python scripts..."
           
           # Test the slicing bug test script
-          pixi run python tests/test_slicing_bug.py
+          uv run tests/test_slicing_bug.py
           
           # Test the CIGAR logic script  
-          pixi run python tests/test_cigar_logic.py
+          uv run tests/test_cigar_logic.py
           
           # Test edge cases analysis script
-          pixi run python tests/test_edge_cases.py
+          uv run tests/test_edge_cases.py
           
           # Test single-end logic script
-          pixi run python tests/test_single_end_logic.py
+          uv run tests/test_single_end_logic.py
           
           # Test fix verification script
-          pixi run python tests/test_fix_verification.py
+          uv run tests/test_fix_verification.py
           
           # Test the main module can be imported
-          pixi run python -c "
+          uv run python -c "
           import sys
           sys.path.insert(0, 'bin')
           from trim_aligned_reads import TrimPolicy
@@ -250,4 +260,4 @@ jobs:
       - name: Test CLI Interface
         run: |
           # Test that the CLI shows help without errors
-          pixi run python bin/trim_aligned_reads.py --help
+          uv run python bin/trim_aligned_reads.py --help
