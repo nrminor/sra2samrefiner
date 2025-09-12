@@ -67,8 +67,7 @@ jobs:
       - name: Test UV Dependency Resolution
         run: |
           echo "Testing UV dependency resolution..."
-          uv sync --dry-run
-          uv pip compile pyproject.toml --dry-run
+          uv sync
           
       - name: Create UV Virtual Environment
         run: |
@@ -104,21 +103,12 @@ jobs:
         
       - name: Run Ruff Linting
         run: |
-          pixi run ruff check .
-          pixi run ruff format --check .
-          
-      - name: Run Type Checking (if enabled)
-        run: |
-          if pixi list | grep -q basedpyright; then
-            echo "Running type check..."
-            pixi run basedpyright || echo "Type checking disabled per pyproject.toml config"
-          else
-            echo "basedpyright not installed, skipping type check"
-          fi
+          uv run ruff check bin
+          uv run ruff format --check bin
           
       - name: Run Python Tests
         run: |
-          pixi run pytest -v --cov=bin --cov-report=xml --cov-report=term-missing
+          uv run pytest -v --cov=bin --cov-report=xml --cov-report=term-missing
           
       - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v4

@@ -250,7 +250,10 @@ def cigar_test_cases() -> list[tuple[str, list[tuple[int, int]]]]:
         ("with_insertion", [(0, 10), (1, 3), (0, 10)]),  # 10M3I10M
         ("with_deletion", [(0, 8), (2, 2), (0, 12)]),  # 8M2D12M
         ("with_soft_clips", [(4, 5), (0, 15), (4, 3)]),  # 5S15M3S
-        ("complex", [(4, 2), (0, 5), (1, 1), (0, 8), (2, 1), (0, 6), (4, 2)]),  # 2S5M1I8M1D6M2S
+        (
+            "complex",
+            [(4, 2), (0, 5), (1, 1), (0, 8), (2, 1), (0, 6), (4, 2)],
+        ),  # 2S5M1I8M1D6M2S
         ("only_soft_clips", [(4, 20)]),  # 20S
         ("only_insertions", [(1, 15)]),  # 15I (unusual but valid)
     ]

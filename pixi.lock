@@ -3964,7 +3964,7 @@ packages:
 - pypi: ./
   name: sra2samrefiner
   version: 0.1.0
-  sha256: 6fe5c85c504ef56e75a93d1b6374fa4010e3db510c934d15fa04fde93d1ab5fb
+  sha256: cccfae686193db2d5d5cc1432ce23afab736e5265304a9aba524c27d6ab8eb13
   requires_dist:
   - biopython>=1.85
   - loguru>=0.7.3

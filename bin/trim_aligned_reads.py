@@ -133,13 +133,13 @@ class CigarOp(NamedTuple):
     length: int
 
     @staticmethod
-    def from_tuple(t: tuple[int, int]) -> "CigarOp":
+    def from_tuple(t: tuple[int, int]) -> CigarOp:
         """Convert a raw (op, len) tuple to CigarOp."""
         op, ln = t
         return CigarOp(op, ln)
 
     @staticmethod
-    def to_tuple(run: "CigarOp") -> tuple[int, int]:
+    def to_tuple(run: CigarOp) -> tuple[int, int]:
         """Convert a CigarOp back to a raw (op, len) tuple."""
         return (run.op, run.length)
 
@@ -148,7 +148,7 @@ class Cigar(list[CigarOp]):
     """A list of CigarOp with helpers for conversion and compaction."""
 
     @classmethod
-    def from_pysam(cls, cig_raw: list[tuple[int, int]] | None) -> "Cigar | None":
+    def from_pysam(cls, cig_raw: list[tuple[int, int]] | None) -> Cigar | None:
         """
         Convert pysam's list[(op, len)] to a Cigar. Returns None if input is None.
         """
@@ -166,7 +166,9 @@ class Cigar(list[CigarOp]):
         Ignores non-positive lengths.
         """
         # Positive invariant: operation code must be valid CIGAR operation (0-8)
-        assert 0 <= op <= 8, f"Invalid CIGAR operation code {op}: must be 0-8 (M,I,D,N,S,H,P,=,X)"
+        assert 0 <= op <= 8, (
+            f"Invalid CIGAR operation code {op}: must be 0-8 (M,I,D,N,S,H,P,=,X)"
+        )
 
         # Negative invariant: length must not cause integer overflow when added
         if self and self[-1].op == op:
@@ -358,7 +360,9 @@ def trim_alignment_in_place(aln: pysam.AlignedSegment, left: int, right: int) ->
 
         aln.query_sequence = new_seq
         aln.query_qualities = new_qual
-        logger.debug(f"Trimmed sequence/qualities only (no CIGAR) for '{aln.query_name}'.")
+        logger.debug(
+            f"Trimmed sequence/qualities only (no CIGAR) for '{aln.query_name}'."
+        )
         return
 
     cig: Cigar = Cigar.from_pysam(cig_raw)
@@ -497,7 +501,9 @@ def open_alignment(
         )
 
         if isinstance(template_or_header, pysam.AlignmentFile):
-            return pysam.AlignmentFile(path, mode, template=template_or_header, **kwargs)
+            return pysam.AlignmentFile(
+                path, mode, template=template_or_header, **kwargs
+            )
         if isinstance(template_or_header, dict):
             return pysam.AlignmentFile(path, mode, header=template_or_header, **kwargs)
         msg = f"Writing requires either a template AlignmentFile or a header dict, got {type(template_or_header)}"
@@ -549,7 +555,9 @@ def process_stream(
     assert batch_size > 0, f"Batch size must be positive, got {batch_size}"
 
     # Positive invariant: policy must have valid trim values
-    assert policy.min_len >= 0, f"Policy min_len must be non-negative, got {policy.min_len}"
+    assert policy.min_len >= 0, (
+        f"Policy min_len must be non-negative, got {policy.min_len}"
+    )
     assert policy.merged_left >= 0 and policy.merged_right >= 0, (
         f"Policy merged trim values must be non-negative: left={policy.merged_left}, right={policy.merged_right}"
     )
@@ -601,7 +609,9 @@ def process_stream(
 
             # Fast-path: no trimming → check length & write/drop
             if left == 0 and right == 0:
-                qlen = aln.query_length or (len(aln.query_sequence) if aln.query_sequence else 0)
+                qlen = aln.query_length or (
+                    len(aln.query_sequence) if aln.query_sequence else 0
+                )
                 if qlen < policy.min_len:
                     dropped_short += 1
                     logger.debug(
@@ -613,7 +623,9 @@ def process_stream(
                 continue
 
             # Early-drop heuristic: predicted post-trim length in read orientation
-            qlen0 = aln.query_length or (len(aln.query_sequence) if aln.query_sequence else 0)
+            qlen0 = aln.query_length or (
+                len(aln.query_sequence) if aln.query_sequence else 0
+            )
             predicted_len = max(0, qlen0 - left - right)
             if predicted_len < policy.min_len:
                 dropped_short += 1
@@ -661,7 +673,12 @@ def process_stream(
 
     # Final invariants: counters must be consistent
     total_processed = kept + dropped_flag + dropped_short + dropped_primary_other
-    assert kept >= 0 and dropped_flag >= 0 and dropped_short >= 0 and dropped_primary_other >= 0, (
+    assert (
+        kept >= 0
+        and dropped_flag >= 0
+        and dropped_short >= 0
+        and dropped_primary_other >= 0
+    ), (
         f"Counters cannot be negative: kept={kept}, dropped_nonprimary={dropped_flag}, "
         f"dropped_primary_other={dropped_primary_other}, dropped_short={dropped_short}"
     )
@@ -700,8 +717,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # I/O
-    p.add_argument("-i", "--in", dest="in_path", required=True, help="Input SAM/BAM/CRAM")
-    p.add_argument("-o", "--out", dest="out_path", required=True, help="Output SAM/BAM/CRAM")
+    p.add_argument(
+        "-i", "--in", dest="in_path", required=True, help="Input SAM/BAM/CRAM"
+    )
+    p.add_argument(
+        "-o", "--out", dest="out_path", required=True, help="Output SAM/BAM/CRAM"
+    )
     p.add_argument(
         "--ref",
         dest="reference",
@@ -722,18 +743,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Right trim for merged reads (query bases)",
     )
-    p.add_argument("--r1-left", type=int, default=30, help="Left trim for unmerged R1 reads")
-    p.add_argument("--r2-right", type=int, default=30, help="Right trim for unmerged R2 reads")
     p.add_argument(
-        "--single-left", type=int, default=30, help="Left trim for single-end/untagged reads"
+        "--r1-left", type=int, default=30, help="Left trim for unmerged R1 reads"
     )
     p.add_argument(
-        "--single-right", type=int, default=30, help="Right trim for single-end/untagged reads"
+        "--r2-right", type=int, default=30, help="Right trim for unmerged R2 reads"
     )
-    p.add_argument("--min-len", type=int, default=20, help="Minimum read length after trimming")
+    p.add_argument(
+        "--single-left",
+        type=int,
+        default=30,
+        help="Left trim for single-end/untagged reads",
+    )
+    p.add_argument(
+        "--single-right",
+        type=int,
+        default=30,
+        help="Right trim for single-end/untagged reads",
+    )
+    p.add_argument(
+        "--min-len", type=int, default=20, help="Minimum read length after trimming"
+    )
 
     # Streaming
-    p.add_argument("--batch-size", type=int, default=10000, help="Batch size for streaming")
+    p.add_argument(
+        "--batch-size", type=int, default=10000, help="Batch size for streaming"
+    )
 
     # Selection
     p.add_argument(
@@ -778,7 +813,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     logger.debug(f"TrimPolicy: {policy}")
 
-    input_alignment = open_alignment(args.in_path, write=False, reference=args.reference)
+    input_alignment = open_alignment(
+        args.in_path, write=False, reference=args.reference
+    )
     try:
         output_alignment = open_alignment(
             args.out_path,

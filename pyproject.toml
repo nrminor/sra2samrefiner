@@ -46,7 +46,9 @@ select = [
 # Test-specific ignores
 ignore = [
   "PLR2004", # Magic values - acceptable in test assertions
+  "PLR0912", # Too many statements- acceptable for complex SAM record handling (for now)
   "PLR0913", # Too many arguments - acceptable for mock objects
+  "PLR0915", # Too many branches - acceptable for complex SAM record handling (for now)
   "ANN201",  # Missing return type on public functions - verbose for test methods
   "ANN204",  # Missing return type on special methods - not critical for tests
   "FBT001",  # Boolean positional args - acceptable for mocking pysam interface

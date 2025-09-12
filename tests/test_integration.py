@@ -19,7 +19,9 @@ class TestFileIO:
 
     def test_open_alignment_sam_read(self, empty_sam_file):
         """Test opening SAM file for reading."""
-        with trim_aligned_reads.open_alignment(str(empty_sam_file), write=False) as sam_file:
+        with trim_aligned_reads.open_alignment(
+            str(empty_sam_file), write=False
+        ) as sam_file:
             assert isinstance(sam_file, pysam.AlignmentFile)
             assert not sam_file.is_write
             assert sam_file.filename.decode() == str(empty_sam_file)
@@ -27,7 +29,10 @@ class TestFileIO:
     def test_open_alignment_sam_write(self, temp_dir, reference_sequence):
         """Test opening SAM file for writing."""
         output_path = temp_dir / "output.sam"
-        header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": "test", "LN": len(reference_sequence)}]}
+        header = {
+            "HD": {"VN": "1.6"},
+            "SQ": [{"SN": "test", "LN": len(reference_sequence)}],
+        }
 
         with trim_aligned_reads.open_alignment(
             str(output_path),
@@ -42,7 +47,9 @@ class TestFileIO:
         output_path = temp_dir / "output.bam"
 
         # Read input BAM
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_bam:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_bam:
             # Write output BAM using input as template
             with trim_aligned_reads.open_alignment(
                 str(output_path),
@@ -58,7 +65,9 @@ class TestFileIO:
 
         # Verify output file exists and is readable
         assert output_path.exists()
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as verify_bam:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as verify_bam:
             reads = list(verify_bam)
             assert len(reads) == 2
 
@@ -107,14 +116,18 @@ class TestFileIO:
         """Test error handling for invalid file extensions."""
         invalid_path = temp_dir / "test.invalid"
 
-        with pytest.raises(ValueError, match="Output/input must end with .sam, .bam, or .cram"):
+        with pytest.raises(
+            ValueError, match="Output/input must end with .sam, .bam, or .cram"
+        ):
             trim_aligned_reads.open_alignment(str(invalid_path), write=False)
 
     def test_writing_without_header(self, temp_dir):
         """Test error handling when writing without header."""
         output_path = temp_dir / "output.sam"
 
-        with pytest.raises(AssertionError, match="Writing .* requires template_or_header"):
+        with pytest.raises(
+            AssertionError, match="Writing .* requires template_or_header"
+        ):
             trim_aligned_reads.open_alignment(str(output_path), write=True)
 
 
@@ -125,7 +138,9 @@ class TestProcessStream:
         """Test processing an empty SAM file."""
         output_path = temp_dir / "output.sam"
 
-        with trim_aligned_reads.open_alignment(str(empty_sam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(empty_sam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -145,7 +160,9 @@ class TestProcessStream:
         """Test processing the sample BAM file."""
         output_path = temp_dir / "trimmed.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -162,7 +179,9 @@ class TestProcessStream:
         assert kept + dropped_flag + dropped_short > 0
 
         # Verify output file
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as verify_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as verify_file:
             output_reads = list(verify_file)
             assert len(output_reads) == kept
 
@@ -180,7 +199,9 @@ class TestProcessStream:
         """Test processing with aggressive trimming that drops short reads."""
         output_path = temp_dir / "aggressively_trimmed.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -195,11 +216,15 @@ class TestProcessStream:
         # With aggressive trimming, we expect some reads to be dropped as too short
         assert dropped_short > 0 or kept == 0  # Either some dropped or all dropped
 
-    def test_process_drop_untagged(self, sample_bam_file, temp_dir, default_trim_policy):
+    def test_process_drop_untagged(
+        self, sample_bam_file, temp_dir, default_trim_policy
+    ):
         """Test processing with drop_untagged=True."""
         output_path = temp_dir / "tagged_only.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -213,9 +238,13 @@ class TestProcessStream:
                 )
 
         # Verify that only tagged reads (MERGED_*, UNMERGED_*) are kept
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as verify_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as verify_file:
             for read in verify_file:
-                assert read.query_name.startswith("MERGED_") or read.query_name.startswith(
+                assert read.query_name.startswith(
+                    "MERGED_"
+                ) or read.query_name.startswith(
                     "UNMERGED_",
                 )
 
@@ -223,7 +252,9 @@ class TestProcessStream:
         """Test processing with different batch sizes."""
         output_path = temp_dir / "batched.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -273,12 +304,16 @@ class TestMainFunction:
         assert output_path.exists()
 
         # Verify it contains valid data
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as output_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as output_file:
             reads = list(output_file)
             # Should have some reads (depending on sample data)
             assert len(reads) >= 0
 
-    def test_main_with_verbose_logging(self, sample_bam_file, temp_dir, reference_fasta):
+    def test_main_with_verbose_logging(
+        self, sample_bam_file, temp_dir, reference_fasta
+    ):
         """Test main function with verbose logging."""
         output_path = temp_dir / "verbose_output.bam"
 
@@ -372,14 +407,19 @@ class TestEdgeCases:
             str(invalid_output),
         ]
 
-        with patch("sys.argv", test_args), pytest.raises((FileNotFoundError, OSError, PermissionError)):
+        with (
+            patch("sys.argv", test_args),
+            pytest.raises((FileNotFoundError, OSError, PermissionError)),
+        ):
             main()
 
     def test_sam_to_bam_conversion(self, empty_sam_file, temp_dir, default_trim_policy):
         """Test converting from SAM to BAM during processing."""
         output_path = temp_dir / "converted.bam"
 
-        with trim_aligned_reads.open_alignment(str(empty_sam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(empty_sam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -389,18 +429,24 @@ class TestEdgeCases:
 
         # Verify BAM file was created and is readable
         assert output_path.exists()
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as bam_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as bam_file:
             assert bam_file.filename.decode().endswith(".bam")
 
 
 class TestValidation:
     """Test SAM/BAM format validation and compliance."""
 
-    def test_output_header_preservation(self, sample_bam_file, temp_dir, default_trim_policy):
+    def test_output_header_preservation(
+        self, sample_bam_file, temp_dir, default_trim_policy
+    ):
         """Test that SAM header is preserved in output."""
         output_path = temp_dir / "header_test.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             original_header = dict(input_file.header)
 
             with trim_aligned_reads.open_alignment(
@@ -411,7 +457,9 @@ class TestValidation:
                 process_stream(input_file, output_file, default_trim_policy)
 
         # Check that header is preserved
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as output_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as output_file:
             output_header = dict(output_file.header)
             assert output_header == original_header
 
@@ -419,7 +467,9 @@ class TestValidation:
         """Test that CIGAR strings remain consistent after trimming."""
         output_path = temp_dir / "cigar_test.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -428,7 +478,9 @@ class TestValidation:
                 process_stream(input_file, output_file, minimal_trim_policy)
 
         # Verify CIGAR consistency in output
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as output_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as output_file:
             for read in output_file:
                 if read.cigartuples and read.query_sequence:
                     # Calculate query length from CIGAR
@@ -440,11 +492,15 @@ class TestValidation:
                     # Should match actual sequence length
                     assert len(read.query_sequence) == cigar_query_len
 
-    def test_quality_score_consistency(self, sample_bam_file, temp_dir, default_trim_policy):
+    def test_quality_score_consistency(
+        self, sample_bam_file, temp_dir, default_trim_policy
+    ):
         """Test that quality scores remain consistent with sequence length."""
         output_path = temp_dir / "quality_test.bam"
 
-        with trim_aligned_reads.open_alignment(str(sample_bam_file), write=False) as input_file:
+        with trim_aligned_reads.open_alignment(
+            str(sample_bam_file), write=False
+        ) as input_file:
             with trim_aligned_reads.open_alignment(
                 str(output_path),
                 write=True,
@@ -453,7 +509,9 @@ class TestValidation:
                 process_stream(input_file, output_file, default_trim_policy)
 
         # Verify quality consistency in output
-        with trim_aligned_reads.open_alignment(str(output_path), write=False) as output_file:
+        with trim_aligned_reads.open_alignment(
+            str(output_path), write=False
+        ) as output_file:
             for read in output_file:
                 if read.query_sequence and read.query_qualities:
                     assert len(read.query_sequence) == len(read.query_qualities)

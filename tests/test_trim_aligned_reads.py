@@ -269,7 +269,9 @@ class TestConsumeFromLeft:
         result_cigar, ref_advance = _consume_from_left(cigar, 12)
         assert len(result_cigar) == 2
         assert result_cigar[0] == CigarOp(1, 3)  # 3I remaining from insertion
-        assert result_cigar[1] == CigarOp(0, 10)  # 10M remaining (consumed 2 from beginning)
+        assert result_cigar[1] == CigarOp(
+            0, 10
+        )  # 10M remaining (consumed 2 from beginning)
         assert ref_advance == 10  # Only M operations advance reference
 
     def test_consume_with_deletion(self):
@@ -281,7 +283,9 @@ class TestConsumeFromLeft:
         result_cigar, ref_advance = _consume_from_left(cigar, 10)
         assert len(result_cigar) == 2
         assert result_cigar[0] == CigarOp(2, 2)  # 2D remaining
-        assert result_cigar[1] == CigarOp(0, 10)  # 10M remaining (consumed 2 from beginning)
+        assert result_cigar[1] == CigarOp(
+            0, 10
+        )  # 10M remaining (consumed 2 from beginning)
         assert ref_advance == 10  # 8 from first M + 2 from D
 
     def test_consume_soft_clips(self):
@@ -306,7 +310,9 @@ class TestConsumeFromLeft:
     def test_consume_negative_trim(self):
         """Test assertion for negative trim amount."""
         cigar = Cigar([CigarOp(0, 10)])
-        with pytest.raises(AssertionError, match="Left trim amount must be non-negative"):
+        with pytest.raises(
+            AssertionError, match="Left trim amount must be non-negative"
+        ):
             _consume_from_left(cigar, -5)
 
     def test_consume_invalid_cigar(self):
@@ -416,7 +422,9 @@ class TestTrimAlignmentInPlace:
         # Sequence trim: still left=2, right=3 in read orientation
         expected_len = 16 - 2 - 3
         assert len(mock_read.query_sequence) == expected_len
-        assert mock_read.query_sequence == "CGATCGATCGA"  # Same sequence result as forward
+        assert (
+            mock_read.query_sequence == "CGATCGATCGA"
+        )  # Same sequence result as forward
         assert mock_read.reference_start == 23  # 20 + 3 (cig_left ref advance)
         assert len(mock_read.query_qualities) == expected_len
 
@@ -446,7 +454,24 @@ class TestTrimAlignmentInPlace:
         """Test that sequence and quality arrays stay synchronized."""
         mock_read = MockAlignedSegment(
             query_sequence="ATCGATCGATCGATCG",
-            query_qualities=[30, 25, 35, 40, 30, 25, 35, 40, 30, 25, 35, 40, 30, 25, 35, 40],
+            query_qualities=[
+                30,
+                25,
+                35,
+                40,
+                30,
+                25,
+                35,
+                40,
+                30,
+                25,
+                35,
+                40,
+                30,
+                25,
+                35,
+                40,
+            ],
             cigartuples=[(0, 16)],
         )
         trim_alignment_in_place(mock_read, 4, 2)
