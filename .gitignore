@@ -33,21 +33,29 @@
 !modules/*.nf
 
 # pre-loaded assets
-!assets
+!assets/
 !assets/sars2.fasta
 !assets/sars2.gbk
+!assets/test-accessions.txt
 
 # examples
 !examples
 !examples/chtc_executable.sh
 
 # tests
-!/tests
+!/tests/
 !/tests/README.md
 !/tests/TEST_SUITE_DOCUMENTATION.md
 !/tests/*test*.py
-!/tests/data
+!/tests/data/
 !/tests/data/*.bam
 !/tests/data/*.bam.bai
 !/tests/data/*.sam
 !/tests/data/*.cram
+
+# github actions and CI
+!/.github/
+!/.github/workflows/
+!/.github/workflows/*.yml
+!/.github/workflows/*.yaml
+!/.github/workflows/README.md

@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'  # Allow pre-release tags like v1.0.0-alpha, v1.0.0-beta.1
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for accurate release notes
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          cache: true
+          
+      - name: Install Dependencies
+        run: pixi install --locked
+        
+      - name: Run Tests Before Release
+        run: |
+          pixi run ruff check .
+          pixi run ruff format --check .
+          pixi run pytest -v
+        
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag (remove 'v' prefix)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          
+          # Check if this is a pre-release
+          if [[ $VERSION == *"-"* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Read pyproject.toml version
+        id: pyproject_version
+        run: |
+          # Extract version from pyproject.toml for verification
+          PYPROJECT_VERSION=$(pixi run python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "pyproject_version=$PYPROJECT_VERSION" >> $GITHUB_OUTPUT
+          
+          # Compare with tag version (without v prefix)
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$PYPROJECT_VERSION" != "$TAG_VERSION" ]]; then
+            echo "❌ Version mismatch detected:"
+            echo "  Tag version: $TAG_VERSION"
+            echo "  pyproject.toml version: $PYPROJECT_VERSION"
+            echo "Please update pyproject.toml version to match the tag."
+            exit 1
+          else
+            echo "✅ Version matches between tag and pyproject.toml"
+          fi
+      - name: Test Pipeline with Sample Data
+        run: |
+          echo "Testing pipeline dry-run before release..."
+          pixi run nextflow run main.nf \
+            --accession_list assets/test-accessions.txt \
+            --ref_fasta assets/sars2.fasta \
+            --ref_gbk assets/sars2.gbk \
+            --end_trim_bases 0 \
+            --max_concurrent_downloads 1 \
+            --sam_refiner_procs 2 \
+            -profile containerless \
+            -preview
+          echo "✅ Pipeline structure validation successful"
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Get the previous tag for generating release notes
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Create release notes
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "## What's Changed" > release_notes.md
+            echo "" >> release_notes.md
+            
+            # Get commits since last tag
+            git log --pretty=format:"* %s (%h)" ${PREVIOUS_TAG}..HEAD >> release_notes.md
+            echo "" >> release_notes.md
+            echo "" >> release_notes.md
+            
+            # Get contributors since last tag
+            CONTRIBUTORS=$(git log --pretty=format:"%an" ${PREVIOUS_TAG}..HEAD | sort | uniq | tr '\n' ',' | sed 's/,$//')
+            if [ -n "$CONTRIBUTORS" ]; then
+              echo "## Contributors" >> release_notes.md
+              echo "Thanks to: $CONTRIBUTORS" >> release_notes.md
+              echo "" >> release_notes.md
+            fi
+          else
+            echo "## Initial Release" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "This is the first release of sra2samrefiner." >> release_notes.md
+            echo "" >> release_notes.md
+            echo "### Features" >> release_notes.md
+            echo "- Nextflow pipeline for SRA data processing and variant analysis" >> release_notes.md
+            echo "- Integration with SAMRefiner for comprehensive variant calling" >> release_notes.md
+            echo "- Support for paired-end, single-end, and merged reads" >> release_notes.md
+            echo "- Comprehensive read trimming and deduplication pipeline" >> release_notes.md
+            echo "- Custom Python tools for aligned read trimming" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          # Add pipeline information
+          echo "### Pipeline Components" >> release_notes.md
+          echo "- **FETCH_FASTQ**: Download SRA data using fasterq-dump" >> release_notes.md
+          echo "- **MERGE_PAIRS**: Merge paired-end reads with bbmerge" >> release_notes.md
+          echo "- **MAP_TO_REF**: Map to reference using minimap2" >> release_notes.md
+          echo "- **TRIM_ALIGNED_ENDS**: Trim read ends with custom Python script" >> release_notes.md
+          echo "- **HANDLE_DUPLICATES**: Remove duplicates using samtools" >> release_notes.md
+          echo "- **SAM_REFINER**: Variant analysis with SAMRefiner" >> release_notes.md
+          echo "- **SORT_AND_CONVERT**: Convert to CRAM format" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Add version information
+          echo "## Version Information" >> release_notes.md
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> release_notes.md
+          echo "- **Tag**: ${{ steps.version.outputs.tag }}" >> release_notes.md
+          echo "- **Commit**: $(git rev-parse HEAD)" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Add installation instructions
+          echo "## Installation" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Using this release with Nextflow:" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "nextflow run <repository_url> -r ${{ steps.version.outputs.tag }} \\" >> release_notes.md
+          echo "    --accession_list your_accessions.txt \\" >> release_notes.md
+          echo "    --ref_fasta reference.fasta \\" >> release_notes.md
+          echo "    --ref_gbk reference.gbk \\" >> release_notes.md
+          echo "    --results results/ \\" >> release_notes.md
+          echo "    [other parameters...]" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Development setup:" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "git clone --branch ${{ steps.version.outputs.tag }} <repository_url>" >> release_notes.md
+          echo "cd sra2samrefiner" >> release_notes.md
+          echo "pixi install --locked" >> release_notes.md
+          echo "pixi shell" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Add requirements
+          echo "## Requirements" >> release_notes.md
+          echo "- Nextflow >=24.10.5" >> release_notes.md
+          echo "- Python >=3.10" >> release_notes.md
+          echo "- Bioinformatics tools: samtools, minimap2, seqkit, bbmap, sra-tools, SAMRefiner" >> release_notes.md
+          echo "- Python packages: pysam, loguru, pandas, polars, typer" >> release_notes.md
+
+      - name: Build Python Distribution
+        run: |
+          echo "Building Python distribution..."
+          pixi run python -m pip install build
+          pixi run python -m build
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Release ${{ steps.version.outputs.tag }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: false  # We're generating our own
+          files: |
+            pixi.lock
+            uv.lock
+            pyproject.toml
+            nextflow.config
+            main.nf
+            assets/*
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update release with additional information
+        run: |
+          echo "✅ Release ${{ steps.version.outputs.tag }} created successfully!"
+          echo ""
+          echo "📋 Release Information:"
+          echo "  - Version: ${{ steps.version.outputs.version }}"
+          echo "  - Prerelease: ${{ steps.version.outputs.prerelease }}"
+          echo "  - Commit: $(git rev-parse HEAD)"
+          echo "  - pyproject.toml version: ${{ steps.pyproject_version.outputs.pyproject_version }}"
+          echo ""
+          echo "🔗 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
