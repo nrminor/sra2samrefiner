@@ -85,8 +85,15 @@ workflow {
             .combine(ch_ref_fasta)
     )
 
-    SAM_REFINER(
+    HANDLE_DUPLICATES(
         TRIM_ALIGNED_ENDS.out
+        .filter { _id, count, _sam ->
+            int count_int = count as Integer
+            count_int  > 0 }
+    )
+
+    SAM_REFINER(
+        HANDLE_DUPLICATES.out
         .filter { _id, count, _sam ->
             int count_int = count as Integer
             count_int  > 0 }
@@ -95,7 +102,7 @@ workflow {
     )
 
     SORT_AND_CONVERT(
-        TRIM_ALIGNED_ENDS.out
+        HANDLE_DUPLICATES.out
         .map { id, _count, sam -> tuple( id, file(sam) ) }
         .combine(ch_ref_fasta)
     )
@@ -126,7 +133,7 @@ process FETCH_FASTQ {
 process MERGE_PAIRS {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode, overwrite: true
+    // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
     maxRetries 2
@@ -152,7 +159,7 @@ process MERGE_PAIRS {
 process MAP_TO_REF {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode, overwrite: true
+    // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -167,8 +174,8 @@ process MAP_TO_REF {
     script:
     """
     # run minimap2
-    minimap2 -a ${ref_fasta} ${derep_fa_reads} \
-    --sam-hit-only --secondary=no \
+    minimap2 -a ${ref_fasta} ${derep_fa_reads} \\
+    --sam-hit-only --secondary=no \\
     | samtools view -@ ${task.cpus} -b -o ${run_accession}.SARS2.wg.bam
 
     # count the records in the SAM file
@@ -194,23 +201,58 @@ process TRIM_ALIGNED_ENDS {
     script:
     """
     echo "Trimmimg ends on ${pre_trim_count} from ${alignment}..." >&2
-    trim_aligned_reads.py \
-    --in ${alignment} \
-    --out "${run_accession}.SARS2.wg.trimmed.cram" \
-    --ref ${ref} \
-    --merged-left ${params.end_trim_bases} \
-    --merged-right ${params.end_trim_bases} \
-    --r1-left ${params.end_trim_bases} \
-    --r2-right ${params.end_trim_bases} \
-    --single-left ${params.end_trim_bases} \
-    --single-right ${params.end_trim_bases} \
-    --min-len 20 \
+    trim_aligned_reads.py \\
+    --in ${alignment} \\
+    --out "${run_accession}.SARS2.wg.trimmed.cram" \\
+    --ref ${ref} \\
+    --merged-left ${params.end_trim_bases} \\
+    --merged-right ${params.end_trim_bases} \\
+    --r1-left ${params.end_trim_bases} \\
+    --r2-right ${params.end_trim_bases} \\
+    --single-left ${params.end_trim_bases} \\
+    --single-right ${params.end_trim_bases} \\
+    --min-len 20 \\
     -v
 
     # count the records in the SAM file
     NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.trimmed.cram)
 
     echo "End-trimming successful. \$NUM_RECORDS reads remain." >&2
+    """
+}
+
+process HANDLE_DUPLICATES {
+
+    tag "${run_accession}"
+    // publishDir params.results, mode: params.reporting_mode, overwrite: true
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
+    cpus 4
+
+    input:
+    tuple val(run_accession), val(pre_dedup_count), path(trimmed_cram)
+
+    output:
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.trimmed.deduped.bam")
+
+    script:
+    """
+    set -euo pipefail
+
+    samtools collate -@ ${task.cpus} -O -u ${trimmed_cram} \\
+    | samtools fixmate -@ ${task.cpus} -m -u - -  \\
+    | samtools sort -@ ${task.cpus} -u - \\
+    | samtools markdup -@ ${task.cpus} -S -s -r --duplicate-count --include-fails - - \\
+    | samtools view -h - \\
+    | prefix_dup_count.awk \\
+    | samtools view -h -b > ${run_accession}.trimmed.deduped.bam \\
+    && seqkit bam -s ${run_accession}.trimmed.deduped.bam
+
+    # count the records in the SAM file
+    NUM_RECORDS=\$(samtools view -c ${run_accession}.trimmed.deduped.bam)
+
+    echo "Deduplication successful. \$NUM_RECORDS reads remain." >&2
     """
 }
 
@@ -231,9 +273,9 @@ process SAM_REFINER {
 
     script:
     """
-    SAM_Refiner -r ${ref_gbk} -S ${sam} \
-    --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --max_covar 1 --max_dist 100 \
-    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \
+    SAM_Refiner -r ${ref_gbk} -S ${sam} \\
+    --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --max_covar 1 --max_dist 100 \\
+    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \\
     --ntcover 1 --AAreport 1 --chim_rm 0 --deconv 0 --mp ${task.cpus}
     """
 }
@@ -255,10 +297,9 @@ process SORT_AND_CONVERT {
 
     script:
     """
-    cat ${sam} \
-    | samtools sort \
-    | samtools view -T ${ref_fasta} -@${task.cpus} \
+    cat ${sam} \\
+    | samtools sort \\
+    | samtools view -T ${ref_fasta} -@${task.cpus} \\
     -o ${run_accession}.SARS2.wg.cram
     """
 }
-
