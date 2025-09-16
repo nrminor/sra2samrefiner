@@ -228,7 +228,8 @@ jobs:
           cache: true
           
       - name: Install Dependencies  
-        run: pixi install --locked
+        run: |
+          uv sync
         
       - name: Test Standalone Scripts
         run: |
