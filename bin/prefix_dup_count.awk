@@ -12,16 +12,16 @@ BEGIN {
 }
 
 {
-	dc = ""
+	count = ""
 	for (i = 12; i <= NF; i++) {
 		if ($i ~ /^dc:i:/) {
 			split($i, a, ":")
-			dc = a[3]
+			count = a[3]
 			break
 		}
 	}
-	if (dc != "") {
-		$1 = dc "-" $1
+	if (count != "") {
+		$1 = count "-" $1
 	}
 	print
 }

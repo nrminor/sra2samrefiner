@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "bin"))
 
-from trim_aligned_reads import ReadCategory, TrimPolicy
+from trim_aligned_reads import ReadCategory, TagConfig, TrimPolicy
 
 
 def test_single_end_logic():
@@ -29,6 +29,9 @@ def test_single_end_logic():
 
     print(f"Test policy: {policy}\n")
 
+    # Create default tag config
+    tag_config = TagConfig()
+
     # Test different read categories
     test_cases = [
         ("MERGED_read123", ReadCategory.MERGED, (10, 15)),
@@ -42,7 +45,7 @@ def test_single_end_logic():
     print("Testing read classification and trimming:")
     for read_name, expected_category, expected_trim in test_cases:
         # Test classification
-        actual_category = ReadCategory.classify(read_name)
+        actual_category = ReadCategory.classify(read_name, tag_config)
         assert actual_category == expected_category, (
             f"Classification failed for '{read_name}': expected {expected_category}, got {actual_category}"
         )

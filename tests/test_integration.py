@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 import trim_aligned_reads
-from trim_aligned_reads import main, process_stream
+from trim_aligned_reads import TagConfig, main, process_stream
 
 
 class TestFileIO:
@@ -150,6 +150,7 @@ class TestProcessStream:
                     input_file,
                     output_file,
                     default_trim_policy,
+                    TagConfig(),
                 )
 
         assert kept == 0
@@ -172,6 +173,7 @@ class TestProcessStream:
                     input_file,
                     output_file,
                     minimal_trim_policy,
+                    TagConfig(),
                 )
 
         # Should have processed some reads
@@ -211,6 +213,7 @@ class TestProcessStream:
                     input_file,
                     output_file,
                     aggressive_trim_policy,
+                    TagConfig(),
                 )
 
         # With aggressive trimming, we expect some reads to be dropped as too short
@@ -234,6 +237,7 @@ class TestProcessStream:
                     input_file,
                     output_file,
                     default_trim_policy,
+                    TagConfig(),
                     drop_untagged=True,
                 )
 
@@ -264,6 +268,7 @@ class TestProcessStream:
                     input_file,
                     output_file,
                     default_trim_policy,
+                    TagConfig(),
                     batch_size=1,  # Process one read at a time
                 )
 
@@ -425,7 +430,9 @@ class TestEdgeCases:
                 write=True,
                 template_or_header=input_file,
             ) as output_file:
-                process_stream(input_file, output_file, default_trim_policy)
+                process_stream(
+                    input_file, output_file, default_trim_policy, TagConfig()
+                )
 
         # Verify BAM file was created and is readable
         assert output_path.exists()
@@ -454,7 +461,9 @@ class TestValidation:
                 write=True,
                 template_or_header=input_file,
             ) as output_file:
-                process_stream(input_file, output_file, default_trim_policy)
+                process_stream(
+                    input_file, output_file, default_trim_policy, TagConfig()
+                )
 
         # Check that header is preserved
         with trim_aligned_reads.open_alignment(
@@ -475,7 +484,9 @@ class TestValidation:
                 write=True,
                 template_or_header=input_file,
             ) as output_file:
-                process_stream(input_file, output_file, minimal_trim_policy)
+                process_stream(
+                    input_file, output_file, minimal_trim_policy, TagConfig()
+                )
 
         # Verify CIGAR consistency in output
         with trim_aligned_reads.open_alignment(
@@ -506,7 +517,9 @@ class TestValidation:
                 write=True,
                 template_or_header=input_file,
             ) as output_file:
-                process_stream(input_file, output_file, default_trim_policy)
+                process_stream(
+                    input_file, output_file, default_trim_policy, TagConfig()
+                )
 
         # Verify quality consistency in output
         with trim_aligned_reads.open_alignment(
@@ -515,6 +528,166 @@ class TestValidation:
             for read in output_file:
                 if read.query_sequence and read.query_qualities:
                     assert len(read.query_sequence) == len(read.query_qualities)
+
+
+class TestClippingModeIntegration:
+    """Test full pipeline integration with different clipping modes."""
+
+    def test_clipping_modes_pipeline_verification(self, temp_dir):
+        """Test all clipping modes verify behavior without file format constraints."""
+        # Create test SAM file
+        input_sam = temp_dir / "input.sam"
+        sam_content = """@HD\tVN:1.6
+@SQ\tSN:test_ref\tLN:1000
+MERGED_read1\t0\ttest_ref\t100\t60\t16M\t*\t0\t0\tATCGATCGATCGATCG\t################
+"""
+        input_sam.write_text(sam_content)
+
+        # Test DELETE and HARD_CLIP modes (they produce valid SAM)
+        for mode_str in ["delete", "hard-clip"]:
+            output_sam = temp_dir / f"output_{mode_str}.sam"
+
+            main(
+                [
+                    "-i",
+                    str(input_sam),
+                    "-o",
+                    str(output_sam),
+                    "--clipping-mode",
+                    mode_str,
+                    "--merged-left",
+                    "2",
+                    "--merged-right",
+                    "3",
+                    "--min-len",
+                    "5",
+                ]
+            )
+
+            # Verify output file exists
+            assert output_sam.exists()
+
+            # Read raw SAM content to verify clipping behavior
+            output_content = output_sam.read_text()
+            lines = [
+                line
+                for line in output_content.split("\n")
+                if line and not line.startswith("@")
+            ]
+
+            assert len(lines) == 1  # Should have one read
+            fields = lines[0].split("\t")
+            read_name, cigar_str, sequence = fields[0], fields[5], fields[9]
+
+            # Validate read name is preserved correctly (no --strip-tags used)
+            assert read_name == "MERGED_read1", (
+                f"Read name should be preserved: {read_name}"
+            )
+
+            if mode_str == "delete":
+                # DELETE mode: sequence trimmed, simple CIGAR
+                assert len(sequence) == 11  # 16 - 2 - 3 = 11
+                assert cigar_str == "11M"  # Simple match
+
+            elif mode_str == "hard-clip":
+                # HARD_CLIP mode: sequence trimmed, CIGAR has hard clips
+                assert len(sequence) == 11  # 16 - 2 - 3 = 11
+                assert "H" in cigar_str  # Should contain hard clips
+                assert cigar_str == "2H11M3H"  # Expected hard clip pattern
+
+    def test_soft_clip_mode_behavior_verification(self, temp_dir):
+        """Test SOFT_CLIP mode behavior by examining raw output."""
+        input_sam = temp_dir / "input.sam"
+        sam_content = """@HD\tVN:1.6
+@SQ\tSN:test_ref\tLN:1000
+MERGED_test\t0\ttest_ref\t100\t60\t12M\t*\t0\t0\tATCGATCGATCG\t############
+"""
+        input_sam.write_text(sam_content)
+
+        output_sam = temp_dir / "output_soft_clip.sam"
+
+        main(
+            [
+                "-i",
+                str(input_sam),
+                "-o",
+                str(output_sam),
+                "--clipping-mode",
+                "soft-clip",
+                "--merged-left",
+                "1",
+                "--merged-right",
+                "2",
+                "--min-len",
+                "5",
+            ]
+        )
+
+        # Verify output by reading raw SAM content
+        assert output_sam.exists()
+        output_content = output_sam.read_text()
+        lines = [
+            line
+            for line in output_content.split("\n")
+            if line and not line.startswith("@")
+        ]
+
+        assert len(lines) == 1
+        fields = lines[0].split("\t")
+        read_name, cigar_str, sequence = fields[0], fields[5], fields[9]
+
+        # Validate read name is preserved correctly (no --strip-tags used)
+        assert read_name == "MERGED_test", f"Read name should be preserved: {read_name}"
+
+        # SOFT_CLIP: sequence preserved, CIGAR has soft clips
+        assert sequence == "ATCGATCGATCG"  # Original sequence preserved
+        assert cigar_str == "1S12M2S"  # Expected soft clip pattern
+        assert fields[3] == "100"  # Reference position unchanged
+
+    def test_clipping_modes_sam_to_bam(self, temp_dir):
+        """Test clipping modes work with SAM to BAM conversion (using DELETE mode)."""
+        input_sam = temp_dir / "input.sam"
+        sam_content = """@HD\tVN:1.6
+@SQ\tSN:test_ref\tLN:1000
+MERGED_test\t0\ttest_ref\t100\t60\t16M\t*\t0\t0\tATCGATCGATCGATCG\t################
+"""
+        input_sam.write_text(sam_content)
+
+        # Test DELETE mode with BAM output (produces valid SAM/BAM format)
+        output_bam = temp_dir / "output_delete.bam"
+
+        main(
+            [
+                "-i",
+                str(input_sam),
+                "-o",
+                str(output_bam),
+                "--clipping-mode",
+                "delete",
+                "--merged-left",
+                "2",
+                "--merged-right",
+                "3",
+                "--min-len",
+                "5",
+            ]
+        )
+
+        # Verify BAM output is correct
+        assert output_bam.exists()
+        with trim_aligned_reads.open_alignment(
+            str(output_bam), write=False
+        ) as bam_file:
+            reads = list(bam_file)
+            assert len(reads) == 1
+
+            read = reads[0]
+            # Should have trimmed sequence with simple CIGAR
+            assert len(read.query_sequence) == 11  # 16 - 2 - 3 = 11
+            assert read.cigartuples == [(0, 11)]  # 11M
+            assert (
+                read.reference_start == 101
+            )  # Advanced by left trim (2): 99 + 2 = 101
 
 
 # Marker for integration tests

@@ -84,8 +84,18 @@ def test_cigar_consumption():
         print(f"Test {i}: {cigar}")
         total_ref = sum(length for op, length in cigar if op in REF_CONSUME)
         total_qry = sum(length for op, length in cigar if op in QRY_CONSUME)
+        total_both = sum(length for op, length in cigar if op in BOTH_CONSUME)
         print(f"  Reference bases consumed: {total_ref}")
         print(f"  Query bases consumed: {total_qry}")
+        print(f"  Both ref+query consumed: {total_both}")
+
+        # Validate the relationship: BOTH_CONSUME should be intersection of REF_CONSUME and QRY_CONSUME
+        expected_both = sum(
+            length for op, length in cigar if op in REF_CONSUME and op in QRY_CONSUME
+        )
+        assert total_both == expected_both, (
+            f"BOTH_CONSUME calculation error: {total_both} != {expected_both}"
+        )
         print()
 
 

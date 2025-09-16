@@ -40,8 +40,11 @@ workflow {
         .branch { sample_id, fastq_files ->
 
             // If there's just one FASTQ, "unpack" it from the array returned by the glob
-            single: fastq_files.size() == 1
-                return tuple(sample_id, file(fastq_files[0]))
+            single: !(fastq_files instanceof List) || fastq_files.size() == 1
+                def fastq_file = fastq_files instanceof List || fastq_files instanceof Tuple
+                    ? fastq_files[0]
+                    : fastq_files
+                return tuple(sample_id, file(fastq_file))
 
             // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq" and the second with ".2.fastq",
             // which is a (mostly) reliable SRA convention
@@ -211,6 +214,8 @@ process TRIM_ALIGNED_ENDS {
     --r2-right ${params.end_trim_bases} \\
     --single-left ${params.end_trim_bases} \\
     --single-right ${params.end_trim_bases} \\
+    --clipping-mode ${params.clipping_mode} \\
+    ${params.strip_tags ? '--strip-tags' : ''} \\
     --min-len 20 \\
     -v
 
