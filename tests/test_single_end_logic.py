@@ -6,7 +6,7 @@ Test the updated single-end trimming logic
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "bin"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bin"))
 
 from trim_aligned_reads import ReadCategory, TagConfig, TrimPolicy
 
