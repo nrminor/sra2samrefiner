@@ -8,12 +8,12 @@ authors = [
 requires-python = ">= 3.10"
 version = "0.1.0"
 dependencies = [
-    "biopython>=1.85",
-    "loguru>=0.7.3",
-    "pandas>=2.2.3",
-    "polars>=1.26.0",
-    "pysam>=0.23.0",
-    "typer>=0.15.2",
+  "biopython>=1.85",
+  "loguru>=0.7.3",
+  "pandas>=2.2.3",
+  "polars>=1.26.0",
+  "pysam>=0.23.0",
+  "typer>=0.15.2",
 ]
 
 [build-system]
@@ -30,9 +30,47 @@ py-modules = ["bin"]
 compile-bytecode = true
 
 [tool.ruff.lint]
-select = []
-ignore = ["ALL"]
-extend-ignore = ["ALL"]
+# Core quality issues that matter in tests
+select = [
+  "F401",   # Unused imports - always fix
+  "F841",   # Unused variables - always fix
+  "ARG001", # Unused function arguments - fix unless fixture injection
+  "PLR091", # Code complexity issues - fix unless test-specific
+  "E711",   # None comparison with == instead of is
+  "E712",   # Bool comparison with == instead of is
+  "UP",     # pyupgrade - modernize syntax
+  "B",      # Bugbear - likely bugs
+  "SIM",    # Simplify - code simplification
+]
+
+# Test-specific ignores
+ignore = [
+  "PLR2004", # Magic values - acceptable in test assertions
+  "PLR0912", # Too many statements- acceptable for complex SAM record handling (for now)
+  "PLR0913", # Too many arguments - acceptable for mock objects
+  "PLR0915", # Too many branches - acceptable for complex SAM record handling (for now)
+  "ANN201",  # Missing return type on public functions - verbose for test methods
+  "ANN204",  # Missing return type on special methods - not critical for tests
+  "FBT001",  # Boolean positional args - acceptable for mocking pysam interface
+  "FBT002",  # Boolean default args - acceptable for mocking pysam interface
+  "E402",    # Module import not at top - needed for sys.path manipulation
+  "PT011",   # pytest.raises too broad - sometimes needed for integration tests
+]
+
+# Test-specific overrides (in case we expand the lint suite for non-test python)
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "PLR2004", # Magic values in test assertions
+  "PLR0913", # Many args in mock objects
+  "ANN001",  # Missing type annotations on test method arguments (fixture types)
+  "ANN201",  # Test method return types
+  "FBT001",  # Boolean args in mocks
+  "FBT002",  # Boolean defaults in mocks
+  "E402",    # Import order for path setup
+  "E501",    # Line too long - test files often have long assertions
+  "S101",    # Use of assert - this is literally what tests do!
+  "SIM117",  # Nested with statements - needed for file template dependencies
+]
 
 [tool.basedpyright]
 venvPath = "."
@@ -64,11 +102,33 @@ apptainer = ">=1.3.6,<2"
 [dependency-groups]
 dev = [
   "basedpyright>=1.28.4",
+  "hypothesis>=6.138.15",
   "jupyter>=1.1.1",
   "marimo[sql]>=0.11.28",
   "polars>=1.26.0",
   "pyarrow>=19.0.1",
   "pytest>=8.3.5",
+  "pytest-cov>=6.0.0",
+  "pytest-mock>=3.14.0",
   "ruff>=0.11.2",
   "tox>=4.24.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "-ra",
+  "--cov=bin",
+  "--cov-report=term-missing",
+  "--cov-report=html:htmlcov",
+]
+markers = [
+  "unit: Unit tests for individual functions",
+  "integration: Integration tests with real data",
+  "slow: Tests that take longer to run",
 ]

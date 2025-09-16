@@ -1,5 +1,12 @@
 # SRA2SAMRefiner
 
+[![CI](https://github.com/nrminor/sra2samrefiner/workflows/CI/badge.svg)](https://github.com/nrminor/sra2samrefiner/actions/workflows/ci.yml)
+[![Release](https://github.com/nrminor/sra2samrefiner/workflows/Release/badge.svg)](https://github.com/nrminor/sra2samrefiner/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/nrminor/sra2samrefiner?include_prereleases&label=latest%20release)](https://github.com/nrminor/sra2samrefiner/releases/latest)
+[![License](https://img.shields.io/github/license/nrminor/sra2samrefiner)](LICENSE)
+[![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A524.10.5-23aa62.svg)](https://nextflow.io)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue.svg)](https://python.org)
+
 A Nextflow pipeline for automated downloading, quality control, and mutational
 haplotype analysis of NCBI SRA datasets using
 [SAMRefiner](https://github.com/degregory/SAM_Refiner). The pipeline enables

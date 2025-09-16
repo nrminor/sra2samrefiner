@@ -1,0 +1,7 @@
+# Illumina runs:
+SRR32418827
+SRR32419302
+# Oxford Nanopore run(s):
+SRR32547168
+# PacBio run(s):
+SRR27840512

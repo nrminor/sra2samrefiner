@@ -40,8 +40,11 @@ workflow {
         .branch { sample_id, fastq_files ->
 
             // If there's just one FASTQ, "unpack" it from the array returned by the glob
-            single: fastq_files.size() == 1
-                return tuple(sample_id, file(fastq_files[0]))
+            single: !(fastq_files instanceof List) || fastq_files.size() == 1
+                def fastq_file = fastq_files instanceof List || fastq_files instanceof Tuple
+                    ? fastq_files[0]
+                    : fastq_files
+                return tuple(sample_id, file(fastq_file))
 
             // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq" and the second with ".2.fastq",
             // which is a (mostly) reliable SRA convention
@@ -73,20 +76,27 @@ workflow {
         )
     )
 
-    DEREPLICATE_READS(
-        MERGE_PAIRS.out.mix(ch_sorted_fastqs.single)
-    )
-
-    TRIM_ENDS(
-        DEREPLICATE_READS.out
-    )
-
     MAP_TO_REF(
-        TRIM_ENDS.out.combine(ch_ref_fasta)
+        MERGE_PAIRS.out.mix(ch_sorted_fastqs.single).combine(ch_ref_fasta)
+    )
+
+    TRIM_ALIGNED_ENDS(
+        MAP_TO_REF.out
+            .filter { _id, count, _sam ->
+                int count_int = count as Integer
+                count_int  > 0 }
+            .combine(ch_ref_fasta)
+    )
+
+    HANDLE_DUPLICATES(
+        TRIM_ALIGNED_ENDS.out
+        .filter { _id, count, _sam ->
+            int count_int = count as Integer
+            count_int  > 0 }
     )
 
     SAM_REFINER(
-        MAP_TO_REF.out
+        HANDLE_DUPLICATES.out
         .filter { _id, count, _sam ->
             int count_int = count as Integer
             count_int  > 0 }
@@ -95,7 +105,7 @@ workflow {
     )
 
     SORT_AND_CONVERT(
-        MAP_TO_REF.out
+        HANDLE_DUPLICATES.out
         .map { id, _count, sam -> tuple( id, file(sam) ) }
         .combine(ch_ref_fasta)
     )
@@ -137,74 +147,16 @@ process MERGE_PAIRS {
     tuple val(run_accession), path(reads1), path(reads2)
 
     output:
-    tuple val(run_accession), path("${run_accession}.merged.fastq")
+    tuple val(run_accession), path("${run_accession}.merged.fastq.gz")
 
     script:
     """
-	bbmerge.sh \
-	in1=`realpath ${reads1}` \
-	in2=`realpath ${reads2}` \
-	out=${run_accession}.merged.fastq \
-	outu=${run_accession}.unmerged.fastq \
-    qtrim=t \
-	ihist=${run_accession}_ihist_merge.txt \
-	threads=${task.cpus} \
-	-eoom
-	
-    # Concat the unmerged reads to the end of the merged reads file
-    cat ${run_accession}.unmerged.fastq >> ${run_accession}.merged.fastq
+    merge_and_tag.sh \\
+    -1 ${reads1} \\
+    -2 ${reads2} \\
+    -o ${run_accession} \\
+    -t ${task.cpus}
 	"""
-}
-
-process DEREPLICATE_READS {
-
-    tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
-
-    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
-
-    cpus 1
-
-    input:
-    tuple val(run_accession), path(fastq)
-
-    output:
-    tuple val(run_accession), path("${run_accession}.collapsed.fasta")
-
-    script:
-    """
-    derep.py ${fastq} ${run_accession}.collapsed.fasta 1
-    """
-}
-
-process TRIM_ENDS {
-
-    tag "${run_accession}"
-    // publishDir params.results, mode: params.reporting_mode, overwrite: true
-
-    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
-
-    cpus 3
-
-    input:
-    tuple val(run_accession), path(fasta)
-
-    output:
-    tuple val(run_accession), path("${run_accession}*trimmed.fasta")
-
-    script:
-    if (params.end_trim_bases == 0 || params.end_trim_bases == false || params.end_trim_bases == null) {
-        """
-        cp ${fasta} ${run_accession}.collapsed.untrimmed.fasta
-        """
-    }
-    else {
-        """
-        cat ${fasta} \
-        | seqkit subseq -r ${params.end_trim_bases}:-${params.end_trim_bases} \
-        -o ${run_accession}.collapsed.${params.end_trim_bases}trimmed.fasta
-        """
-    }
 }
 
 process MAP_TO_REF {
@@ -220,17 +172,92 @@ process MAP_TO_REF {
     tuple val(run_accession), path(derep_fa_reads), path(ref_fasta)
 
     output:
-    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.sam")
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.bam")
 
     script:
     """
     # run minimap2
-    minimap2 -a ${ref_fasta} ${derep_fa_reads} \
-    --sam-hit-only --secondary=no \
-    -o ${run_accession}.SARS2.wg.sam
+    minimap2 -a ${ref_fasta} ${derep_fa_reads} \\
+    --sam-hit-only --secondary=no \\
+    | samtools view -@ ${task.cpus} -b -o ${run_accession}.SARS2.wg.bam
 
     # count the records in the SAM file
-    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.sam)
+    NUM_RECORDS=\$(samtools view -@ ${task.cpus} -c ${run_accession}.SARS2.wg.bam)
+    """
+}
+
+process TRIM_ALIGNED_ENDS {
+
+    tag "${run_accession}"
+    publishDir params.results, mode: params.reporting_mode, overwrite: true
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
+    cpus 1
+
+    input:
+    tuple val(run_accession), val(pre_trim_count), path(alignment), path(ref)
+
+    output:
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.trimmed.cram")
+
+    script:
+    """
+    echo "Trimmimg ends on ${pre_trim_count} from ${alignment}..." >&2
+    trim_aligned_reads.py \\
+    --in ${alignment} \\
+    --out "${run_accession}.SARS2.wg.trimmed.cram" \\
+    --ref ${ref} \\
+    --merged-left ${params.end_trim_bases} \\
+    --merged-right ${params.end_trim_bases} \\
+    --r1-left ${params.end_trim_bases} \\
+    --r2-right ${params.end_trim_bases} \\
+    --single-left ${params.end_trim_bases} \\
+    --single-right ${params.end_trim_bases} \\
+    --clipping-mode ${params.clipping_mode} \\
+    ${params.strip_tags ? '--strip-tags' : ''} \\
+    --min-len 20 \\
+    -v
+
+    # count the records in the SAM file
+    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.trimmed.cram)
+
+    echo "End-trimming successful. \$NUM_RECORDS reads remain." >&2
+    """
+}
+
+process HANDLE_DUPLICATES {
+
+    tag "${run_accession}"
+    // publishDir params.results, mode: params.reporting_mode, overwrite: true
+
+    errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
+
+    cpus 4
+
+    input:
+    tuple val(run_accession), val(pre_dedup_count), path(trimmed_cram)
+
+    output:
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.trimmed.deduped.bam")
+
+    script:
+    """
+    set -euo pipefail
+
+    samtools collate -@ ${task.cpus} -O -u ${trimmed_cram} \\
+    | samtools fixmate -@ ${task.cpus} -m -u - -  \\
+    | samtools sort -@ ${task.cpus} -u - \\
+    | samtools markdup -@ ${task.cpus} -S -s -r --duplicate-count --include-fails - - \\
+    | samtools view -h - \\
+    | prefix_dup_count.awk \\
+    | samtools view -h -b > ${run_accession}.trimmed.deduped.bam \\
+    && seqkit bam -s ${run_accession}.trimmed.deduped.bam
+
+    # count the records in the SAM file
+    NUM_RECORDS=\$(samtools view -c ${run_accession}.trimmed.deduped.bam)
+
+    echo "Deduplication successful. \$NUM_RECORDS reads remain." >&2
     """
 }
 
@@ -251,9 +278,9 @@ process SAM_REFINER {
 
     script:
     """
-    SAM_Refiner -r ${ref_gbk} -S ${sam} \
-    --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --max_covar 1 --max_dist 100 \
-    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \
+    SAM_Refiner -r ${ref_gbk} -S ${sam} \\
+    --wgs 1 --collect 0 --seq 1 --indel 0 --covar 1 --max_covar 1 --max_dist 100 \\
+    --AAcentered 0 --nt_call 1 --min_count 1 --min_samp_abund 0 --ntabund 0 \\
     --ntcover 1 --AAreport 1 --chim_rm 0 --deconv 0 --mp ${task.cpus}
     """
 }
@@ -275,10 +302,9 @@ process SORT_AND_CONVERT {
 
     script:
     """
-    cat ${sam} \
-    | samtools sort \
-    | samtools view -T ${ref_fasta} -@${task.cpus} \
+    cat ${sam} \\
+    | samtools sort \\
+    | samtools view -T ${ref_fasta} -@${task.cpus} \\
     -o ${run_accession}.SARS2.wg.cram
     """
 }
-
