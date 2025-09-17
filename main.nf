@@ -189,7 +189,7 @@ process MAP_TO_REF {
 process TRIM_ALIGNED_ENDS {
 
     tag "${run_accession}"
-    publishDir params.results, mode: params.reporting_mode, overwrite: true
+    // publishDir params.results, mode: params.reporting_mode, overwrite: true
 
     errorStrategy { task.attempt < 3 ? 'retry' : 'ignore' }
 
@@ -199,14 +199,14 @@ process TRIM_ALIGNED_ENDS {
     tuple val(run_accession), val(pre_trim_count), path(alignment), path(ref)
 
     output:
-    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.trimmed.cram")
+    tuple val(run_accession), env('NUM_RECORDS'), path("${run_accession}.SARS2.wg.trimmed.bam")
 
     script:
     """
     echo "Trimmimg ends on ${pre_trim_count} from ${alignment}..." >&2
     trim_aligned_reads.py \\
     --in ${alignment} \\
-    --out "${run_accession}.SARS2.wg.trimmed.cram" \\
+    --out "${run_accession}.SARS2.wg.trimmed.bam" \\
     --ref ${ref} \\
     --merged-left ${params.end_trim_bases} \\
     --merged-right ${params.end_trim_bases} \\
@@ -220,7 +220,7 @@ process TRIM_ALIGNED_ENDS {
     -v
 
     # count the records in the SAM file
-    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.trimmed.cram)
+    NUM_RECORDS=\$(samtools view -c ${run_accession}.SARS2.wg.trimmed.bam)
 
     echo "End-trimming successful. \$NUM_RECORDS reads remain." >&2
     """
