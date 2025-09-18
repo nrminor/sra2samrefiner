@@ -27,13 +27,23 @@ jobs:
           cache: true
           
       - name: Install Dependencies
-        run: pixi install --locked
+        run: |
+          pixi install --locked
+      
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
+        with:
+          cache: true
+          
+      - name: Install Python Dev Dependencies
+        run: |
+          uv sync --dev
         
       - name: Run Tests Before Release
         run: |
-          pixi run ruff check .
-          pixi run ruff format --check .
-          pixi run pytest -v
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run pytest -v
         
       - name: Extract version from tag
         id: version
@@ -166,13 +176,6 @@ jobs:
           echo "- Bioinformatics tools: samtools, minimap2, seqkit, bbmap, sra-tools, SAMRefiner" >> release_notes.md
           echo "- Python packages: pysam, loguru, pandas, polars, typer" >> release_notes.md
 
-      - name: Build Python Distribution
-        run: |
-          echo "Building Python distribution..."
-          pixi run python -m pip install build
-          pixi run python -m build
-          ls -la dist/
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -189,7 +192,6 @@ jobs:
             nextflow.config
             main.nf
             assets/*
-            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
