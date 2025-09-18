@@ -27,13 +27,23 @@ jobs:
           cache: true
           
       - name: Install Dependencies
-        run: pixi install --locked
+        run: |
+          pixi install --locked
+      
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
+        with:
+          cache: true
+          
+      - name: Install Python Dev Dependencies
+        run: |
+          uv sync --dev
         
       - name: Run Tests Before Release
         run: |
-          pixi run ruff check .
-          pixi run ruff format --check .
-          pixi run pytest -v
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run pytest -v
         
       - name: Extract version from tag
         id: version
