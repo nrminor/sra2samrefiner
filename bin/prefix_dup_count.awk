@@ -21,9 +21,9 @@ BEGIN {
 		}
 	}
 	if (count != "") {
-		$1 = count "-" $1
+		$1 = $1 "-" count
 	}
 	print
 }
 
-# For each alignment, if a dc:i: tag exists, prepend it to QNAME
+# For each alignment, if a dc:i: tag exists, append it to QNAME for SAM Refiner to be able to get counts
