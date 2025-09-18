@@ -1,51 +1,115 @@
-# name: Branch Protection Check
+name: Branch Protection Check
 
-# # This workflow ensures all required checks pass before allowing merges to main
-# # It serves as a single required status check that depends on all CI jobs
+# This workflow ensures all required checks pass before allowing merges to main
+# It serves as a single required status check that depends on all CI jobs
 
-# on:
-#   pull_request:
-#     branches: [ main ]
-#   push:
-#     branches: [ main ]
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
 
-# jobs:
-#   # This job waits for all CI checks and provides a single status check for branch protection
-#   all-checks-passed:
-#     name: All Checks Passed
-#     runs-on: ubuntu-latest
-#     needs: 
-#       - check-ci-jobs
-#     steps:
-#       - name: All Required Checks Passed
-#         run: |
-#           echo "✅ All required CI checks have passed!"
-#           echo "This PR is ready to merge to main."
-
-#   # Job to verify all CI workflow jobs are passing
-#   check-ci-jobs:
-#     name: Verify CI Status
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v4
+jobs:
+  # This job waits for all CI checks and provides a single status check for branch protection
+  all-checks-passed:
+    name: All Checks Passed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         
-#       - name: Wait for CI workflow
-#         uses: fountainhead/action-wait-for-check@v1.2.0
-#         id: wait-for-ci
-#         with:
-#           token: ${{ secrets.GITHUB_TOKEN }}
-#           checkName: "CI"
-#           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-#           timeoutSeconds: 3600 # 1 hour timeout
-#           intervalSeconds: 30
+      - name: Wait for Pixi Environment Build (Ubuntu)
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-pixi-ubuntu
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Pixi Environment Build (ubuntu-latest)"
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          timeoutSeconds: 1800
+          intervalSeconds: 30
           
-#       - name: Check CI Results
-#         run: |
-#           if [ "${{ steps.wait-for-ci.outputs.conclusion }}" != "success" ]; then
-#             echo "❌ CI workflow did not complete successfully"
-#             echo "Status: ${{ steps.wait-for-ci.outputs.conclusion }}"
-#             exit 1
-#           else
-#             echo "✅ CI workflow completed successfully"
-#           fi
+      - name: Wait for Pixi Environment Build (macOS)
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-pixi-macos
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Pixi Environment Build (macos-latest)"
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          timeoutSeconds: 1800
+          intervalSeconds: 30
+          
+      - name: Wait for UV Dependency Resolution
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-uv
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "UV Dependency Resolution"
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          timeoutSeconds: 1800
+          intervalSeconds: 30
+          
+      - name: Wait for Python Lints and Tests
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-python-quality
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Python Lints and Tests"
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          timeoutSeconds: 1800
+          intervalSeconds: 30
+          
+      - name: Wait for Pipeline Integration Test
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-pipeline
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Pipeline Integration Test"
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          timeoutSeconds: 3600
+          intervalSeconds: 30
+          
+      - name: Wait for Python Script Tests
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-scripts
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: "Python Script Tests"
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          timeoutSeconds: 1800
+          intervalSeconds: 30
+          
+      - name: Verify All Checks Passed
+        run: |
+          # Check each job's conclusion
+          if [ "${{ steps.wait-pixi-ubuntu.outputs.conclusion }}" != "success" ]; then
+            echo "❌ Pixi Environment Build (Ubuntu) failed: ${{ steps.wait-pixi-ubuntu.outputs.conclusion }}"
+            exit 1
+          fi
+          
+          if [ "${{ steps.wait-pixi-macos.outputs.conclusion }}" != "success" ]; then
+            echo "❌ Pixi Environment Build (macOS) failed: ${{ steps.wait-pixi-macos.outputs.conclusion }}"
+            exit 1
+          fi
+          
+          if [ "${{ steps.wait-uv.outputs.conclusion }}" != "success" ]; then
+            echo "❌ UV Dependency Resolution failed: ${{ steps.wait-uv.outputs.conclusion }}"
+            exit 1
+          fi
+          
+          if [ "${{ steps.wait-python-quality.outputs.conclusion }}" != "success" ]; then
+            echo "❌ Python Lints and Tests failed: ${{ steps.wait-python-quality.outputs.conclusion }}"
+            exit 1
+          fi
+          
+          if [ "${{ steps.wait-pipeline.outputs.conclusion }}" != "success" ]; then
+            echo "❌ Pipeline Integration Test failed: ${{ steps.wait-pipeline.outputs.conclusion }}"
+            exit 1
+          fi
+          
+          if [ "${{ steps.wait-scripts.outputs.conclusion }}" != "success" ]; then
+            echo "❌ Python Script Tests failed: ${{ steps.wait-scripts.outputs.conclusion }}"
+            exit 1
+          fi
+          
+          echo "✅ All required CI checks have passed!"
+          echo "This PR is ready to merge to main."
