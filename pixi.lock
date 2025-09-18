@@ -3963,8 +3963,8 @@ packages:
   timestamp: 1743610889639
 - pypi: ./
   name: sra2samrefiner
-  version: 0.1.0
-  sha256: cccfae686193db2d5d5cc1432ce23afab736e5265304a9aba524c27d6ab8eb13
+  version: 0.2.0
+  sha256: 388c936627980355e84167a419a852466fdf0cc865443208207f8a90fc2a4ac8
   requires_dist:
   - biopython>=1.85
   - loguru>=0.7.3
