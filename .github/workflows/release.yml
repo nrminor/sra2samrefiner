@@ -176,13 +176,6 @@ jobs:
           echo "- Bioinformatics tools: samtools, minimap2, seqkit, bbmap, sra-tools, SAMRefiner" >> release_notes.md
           echo "- Python packages: pysam, loguru, pandas, polars, typer" >> release_notes.md
 
-      - name: Build Python Distribution
-        run: |
-          echo "Building Python distribution..."
-          pixi run python -m pip install build
-          pixi run python -m build
-          ls -la dist/
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -199,7 +192,6 @@ jobs:
             nextflow.config
             main.nf
             assets/*
-            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
