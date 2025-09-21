@@ -119,7 +119,7 @@ class ReadCategory(Enum):
             case ReadCategory.UNMERGED_R1:
                 return max(0, policy.r1_left), 0
             case ReadCategory.UNMERGED_R2:
-                return 0, max(0, policy.r2_right)
+                return max(0, policy.r2_right), 0
             case ReadCategory.OTHER:
                 # Apply single-end trimming for untagged reads (single-end, Nanopore, etc.)
                 return max(0, policy.single_left), max(0, policy.single_right)
@@ -256,21 +256,52 @@ def _consume_from_left(cig: Cigar, trim_q: int) -> tuple[Cigar, int]:
     ref_advance = 0
     total_consumed_query = 0
     i = 0
+    '''
+    3 operations:
+    trim run, advance start, reduce remaining trim len
+    trim : all
+    advance: REF_CONSUME
+    reduce: QRY_CONSUME
+    
+    M: trim, advance, reduce
+    I: trim, reduce
+    D: trim, advance
+    N: trim, advance
+    S: trim, reduce
+    H: trim
+    P: trim
+    =: trim, advance, reduce
+    X: trim, advance, reduce
 
+    4 cases:
+    BOTH_CONSUME: trim, advance, reduce
+    REF_CONSUME and NOT QRY_CONSUME: trim, advance
+    QRY_CONSUME and NOT REF_CONSUME: trim, reduce
+    NOT REF_CONSUME or QRY_CONSUME: trim
+    '''
     while i < len(cig) and remaining > 0:
         run = cig[i]
-        if run.op in QRY_CONSUME:
-            take = min(run.length, remaining)
-            keep_len = run.length - take
-            remaining -= take
-            total_consumed_query += take
+        i += 1
+        # H/P: trimmed from CIGAR, no further actions needed
+        if not (run.op in REF_CONSUME or run.op in QRY_CONSUME):
+            continue
+
+        take = min(run.length, remaining)
+        # advance start position for REF_CONSUME: M/D/N/=/X
+        if run.op in REF_CONSUME:
             if run.op in BOTH_CONSUME:
                 ref_advance += take
+            else:
+                ref_advance += run.length
+        # reduce remaining for QRY_CONSUME: M/I/S/=/X
+        # remove run otherwise
+        if not run.op in QRY_CONSUME:
+            continue
+        keep_len = run.length - take
+        remaining -= take
+        total_consumed_query += take
+        if keep_len > 0: # only keep if run still exists
             out.push_compact(run.op, keep_len)
-        else:
-            # D/N/H/P: keep fully; they don't consume query so `remaining` stays.
-            out.push_compact(run.op, run.length)
-        i += 1
 
     # Append untouched tail
     for j in range(i, len(cig)):
@@ -315,15 +346,36 @@ def _consume_from_right(cig: Cigar, trim_q: int) -> Cigar:
     out_rev = Cigar()
     remaining = trim_q
     total_consumed_query = 0
+    '''
+    2 operations:
+    trim run, reduce remaining trim len
+    trim : all
+    reduce: QRY_CONSUME
+    
+    M: trim, reduce
+    I: trim, reduce
+    D: trim
+    N: trim
+    S: trim, reduce
+    H: trim
+    P: trim
+    =: trim reduce
+    X: trim, reduce
 
+    2 cases:
+    QRY_CONSUME: trim, reduce
+    NOT QRY_CONSUME: trim
+    '''
     # Build reversed output with compaction
     for run in reversed(cig):
-        if remaining > 0 and run.op in QRY_CONSUME:
-            take = min(run.length, remaining)
-            keep_len = run.length - take
-            remaining -= take
-            total_consumed_query += take
-            out_rev.push_compact(run.op, keep_len)
+        if remaining > 0:
+            if run.op in QRY_CONSUME:
+                take = min(run.length, remaining)
+                keep_len = run.length - take
+                remaining -= take
+                total_consumed_query += take
+                if keep_len > 0:
+                    out_rev.push_compact(run.op, keep_len)
         else:
             out_rev.push_compact(run.op, run.length)
 
@@ -524,8 +576,8 @@ def trim_alignment_in_place(  # noqa: C901, PLR0912, PLR0915
 
             # Trim sequence/qualities in read orientation
             qlen = len(seq)
-            cut_left = min(left, qlen)
-            cut_right = min(right, max(qlen - cut_left, 0))
+            cut_left = min(cig_left, qlen)
+            cut_right = min(cig_right, max(qlen - cut_left, 0))
             keep_end = qlen - cut_left - cut_right
 
             # Positive invariant: trimming calculations must be arithmetically sound
@@ -559,8 +611,8 @@ def trim_alignment_in_place(  # noqa: C901, PLR0912, PLR0915
 
             # Trim sequence/qualities in read orientation (same as DELETE)
             qlen = len(seq)
-            cut_left = min(left, qlen)
-            cut_right = min(right, max(qlen - cut_left, 0))
+            cut_left = min(cig_left, qlen)
+            cut_right = min(cig_right, max(qlen - cut_left, 0))
             keep_end = qlen - cut_left - cut_right
 
             # Same validation as DELETE mode
@@ -807,7 +859,7 @@ def process_stream(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     f"dropped_nonprimary={dropped_flag}, dropped_primary_other={dropped_primary_other}, "
                     f"dropped_short={dropped_short}",
                 )
-
+        
             category = ReadCategory.classify(aln.query_name, tag_config)
 
             if category is ReadCategory.OTHER and drop_untagged:
