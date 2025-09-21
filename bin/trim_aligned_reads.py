@@ -576,8 +576,8 @@ def trim_alignment_in_place(  # noqa: C901, PLR0912, PLR0915
 
             # Trim sequence/qualities in read orientation
             qlen = len(seq)
-            cut_left = min(left, qlen)
-            cut_right = min(right, max(qlen - cut_left, 0))
+            cut_left = min(cig_left, qlen)
+            cut_right = min(cig_right, max(qlen - cut_left, 0))
             keep_end = qlen - cut_left - cut_right
 
             # Positive invariant: trimming calculations must be arithmetically sound
@@ -611,8 +611,8 @@ def trim_alignment_in_place(  # noqa: C901, PLR0912, PLR0915
 
             # Trim sequence/qualities in read orientation (same as DELETE)
             qlen = len(seq)
-            cut_left = min(left, qlen)
-            cut_right = min(right, max(qlen - cut_left, 0))
+            cut_left = min(cig_left, qlen)
+            cut_right = min(cig_right, max(qlen - cut_left, 0))
             keep_end = qlen - cut_left - cut_right
 
             # Same validation as DELETE mode
@@ -869,16 +869,12 @@ def process_stream(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 )
                 continue
 
-            print(category)
             # Determine trim extents
             if category is ReadCategory.OTHER:
                 # Apply single-end policy to untagged reads that we keep
                 left, right = max(0, policy.single_left), max(0, policy.single_right)
             else:
                 left, right = category.trim_extents(policy)
-            print(left)
-            print(right)
-            print(" ")
 
             # Fast-path: no trimming → check length & write/drop
             if left == 0 and right == 0:
