@@ -119,7 +119,7 @@ class ReadCategory(Enum):
             case ReadCategory.UNMERGED_R1:
                 return max(0, policy.r1_left), 0
             case ReadCategory.UNMERGED_R2:
-                return 0, max(0, policy.r2_right)
+                return max(0, policy.r2_right), 0
             case ReadCategory.OTHER:
                 # Apply single-end trimming for untagged reads (single-end, Nanopore, etc.)
                 return max(0, policy.single_left), max(0, policy.single_right)
@@ -859,7 +859,7 @@ def process_stream(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     f"dropped_nonprimary={dropped_flag}, dropped_primary_other={dropped_primary_other}, "
                     f"dropped_short={dropped_short}",
                 )
-
+        
             category = ReadCategory.classify(aln.query_name, tag_config)
 
             if category is ReadCategory.OTHER and drop_untagged:
@@ -869,12 +869,16 @@ def process_stream(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 )
                 continue
 
+            print(category)
             # Determine trim extents
             if category is ReadCategory.OTHER:
                 # Apply single-end policy to untagged reads that we keep
                 left, right = max(0, policy.single_left), max(0, policy.single_right)
             else:
                 left, right = category.trim_extents(policy)
+            print(left)
+            print(right)
+            print(" ")
 
             # Fast-path: no trimming → check length & write/drop
             if left == 0 and right == 0:
