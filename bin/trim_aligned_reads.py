@@ -256,21 +256,52 @@ def _consume_from_left(cig: Cigar, trim_q: int) -> tuple[Cigar, int]:
     ref_advance = 0
     total_consumed_query = 0
     i = 0
+    '''
+    3 operations:
+    trim run, advance start, reduce remaining trim len
+    trim : all
+    advance: REF_CONSUME
+    reduce: QRY_CONSUME
+    
+    M: trim, advance, reduce
+    I: trim, reduce
+    D: trim, advance
+    N: trim, advance
+    S: trim, reduce
+    H: trim
+    P: trim
+    =: trim, advance, reduce
+    X: trim, advance, reduce
 
+    4 cases:
+    BOTH_CONSUME: trim, advance, reduce
+    REF_CONSUME and NOT QRY_CONSUME: trim, advance
+    QRY_CONSUME and NOT REF_CONSUME: trim, reduce
+    NOT REF_CONSUME or QRY_CONSUME: trim
+    '''
     while i < len(cig) and remaining > 0:
         run = cig[i]
-        if run.op in QRY_CONSUME:
-            take = min(run.length, remaining)
-            keep_len = run.length - take
-            remaining -= take
-            total_consumed_query += take
+        i += 1
+        # H/P: trimmed from CIGAR, no further actions needed
+        if not (run.op in REF_CONSUME or run.op in QRY_CONSUME):
+            continue
+
+        take = min(run.length, remaining)
+        # advance start position for REF_CONSUME: M/D/N/=/X
+        if run.op in REF_CONSUME:
             if run.op in BOTH_CONSUME:
                 ref_advance += take
+            else:
+                ref_advance += run.length
+        # reduce remaining for QRY_CONSUME: M/I/S/=/X
+        # remove run otherwise
+        if not run.op in QRY_CONSUME:
+            continue
+        keep_len = run.length - take
+        remaining -= take
+        total_consumed_query += take
+        if keep_len > 0: # only keep if run still exists
             out.push_compact(run.op, keep_len)
-        else:
-            # D/N/H/P: keep fully; they don't consume query so `remaining` stays.
-            out.push_compact(run.op, run.length)
-        i += 1
 
     # Append untouched tail
     for j in range(i, len(cig)):
