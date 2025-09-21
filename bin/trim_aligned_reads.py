@@ -368,13 +368,16 @@ def _consume_from_right(cig: Cigar, trim_q: int) -> Cigar:
     '''
     # Build reversed output with compaction
     for run in reversed(cig):
-        if remaining > 0 and run.op in QRY_CONSUME:
-            take = min(run.length, remaining)
-            keep_len = run.length - take
-            remaining -= take
-            total_consumed_query += take
-            if keep_len > 0:
-                out_rev.push_compact(run.op, keep_len)
+        if remaining > 0
+            if run.op in QRY_CONSUME:
+                take = min(run.length, remaining)
+                keep_len = run.length - take
+                remaining -= take
+                total_consumed_query += take
+                if keep_len > 0:
+                    out_rev.push_compact(run.op, keep_len)
+        else:
+            out_rev.push_compact(run.op, run.length)
 
     # Reverse back (preserving compaction)
     out = Cigar()
