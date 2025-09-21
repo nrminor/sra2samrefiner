@@ -368,7 +368,7 @@ def _consume_from_right(cig: Cigar, trim_q: int) -> Cigar:
     '''
     # Build reversed output with compaction
     for run in reversed(cig):
-        if remaining > 0
+        if remaining > 0:
             if run.op in QRY_CONSUME:
                 take = min(run.length, remaining)
                 keep_len = run.length - take
