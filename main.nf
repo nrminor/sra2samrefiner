@@ -38,42 +38,24 @@ workflow {
     // contains paired-end libraries with >=2 FASTQs, and the other contains the rest
     FETCH_FASTQ.out
         .branch { sample_id, fastq_files ->
-
-            // If there's just one FASTQ, "unpack" it from the array returned by the glob
-            single: !(fastq_files instanceof List) || fastq_files.size() == 1
+            // Simple two-way branch: paired vs single
+            // Check if we have 2 or more files (paired-end)
+            paired: (fastq_files instanceof List || fastq_files instanceof Collection) && fastq_files.size() >= 2
+                // Return all FASTQ files so Nextflow stages them in work dir
+                return tuple(sample_id, fastq_files)
+            
+            // Everything else is treated as single-end
+            single: true
+                // For single-end, return the first (or only) FASTQ file
                 def fastq_file = fastq_files instanceof List || fastq_files instanceof Tuple
                     ? fastq_files[0]
                     : fastq_files
                 return tuple(sample_id, file(fastq_file))
-
-            // If there are two FASTQs, expect that the alphanumeric first will end with ".1.fastq" and the second with ".2.fastq",
-            // which is a (mostly) reliable SRA convention
-            paired: fastq_files.size() > 1 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
-                return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]))
-
-            // There are a couple common cases of >2 FASTQs per accession that we can handle. The first is where the first two files
-            // end with "1.fastq" and ".2.fastq" and the third ends with "3.fastq". Assuming correct alphanumeric sorting, we handle
-            // that in this branch.
-            triple1: fastq_files.size() > 2 && file(fastq_files[0]).getName().endsWith("1.fastq") && file(fastq_files[1]).getName().endsWith("2.fastq")
-                return tuple(sample_id, file(fastq_files[0]), file(fastq_files[1]))
-
-            // It's also possible that the third, non-R1/R2 reads are in a FASTQ that doesn't have a numbered suffix, e.g.,
-            // SRR33146255.fastq. When that's the case, that third FASTQ will end up first when the files are sorted by name.
-            // We handle that case in this branch by indexing out the second and third FASTQ (groovy/nextflow are 0-indexed)
-            triple2: fastq_files.size() > 2 && file(fastq_files[1]).getName().endsWith("1.fastq") && file(fastq_files[2]).getName().endsWith("2.fastq")
-                return tuple(sample_id, file(fastq_files[1]), file(fastq_files[2]))
-
-            // Other cases are as-yet unsupported
-            other: true
         }
         .set { ch_sorted_fastqs }
 
     MERGE_PAIRS(
         ch_sorted_fastqs.paired
-        .mix(
-            ch_sorted_fastqs.triple1,
-            ch_sorted_fastqs.triple2
-        )
     )
 
     MAP_TO_REF(
@@ -129,7 +111,7 @@ process FETCH_FASTQ {
     script:
     """
     prefetch ${run_accession}
-    fasterq-dump --split-3 ${run_accession}
+    fasterq-dump --split-files --skip-technical ${run_accession}
     """
 }
 
@@ -144,16 +126,15 @@ process MERGE_PAIRS {
     cpus 4
 
     input:
-    tuple val(run_accession), path(reads1), path(reads2)
+    tuple val(run_accession), path(fastqs)
 
     output:
     tuple val(run_accession), path("${run_accession}.merged.fastq.gz")
 
     script:
     """
-    merge_and_tag.sh \\
-    -1 ${reads1} \\
-    -2 ${reads2} \\
+    # Script auto-detects R1/R2 files from the accession name
+    repair_merge_tag.sh \\
     -o ${run_accession} \\
     -t ${task.cpus}
 	"""
